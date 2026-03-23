@@ -5,6 +5,7 @@
 ## 現状サマリ（2026-03-23）
 
 - 主要実装は Rust バイナリ `ae-mcp`（`serve-stdio` / `serve-daemon` / `service` / `bridge`）で稼働。
+- npm/TypeScript サーバー実装は削除済み（`package.json` / `src/index.ts` 等は廃止）。
 - AE 連携は `mcp-bridge-auto.jsx` 経由（`~/Documents/ae-mcp-bridge` の command/result ファイル）。
 - `applyEffect` / `applyEffectTemplate` は ExtendScript 互換化済み（`Object.keys` 非依存）。
 - ターゲット指定は `compId/layerId`、`compName/layerName`、`compIndex/layerIndex` をサポート。

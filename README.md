@@ -6,6 +6,7 @@ After Effects 側の `mcp-bridge-auto.jsx` と、`~/Documents/ae-mcp-bridge` の
 ## 現状（2026-03-23）
 
 - 実運用の中心は Rust バイナリ `ae-mcp`
+- 旧 npm/TypeScript サーバー実装はこのリポジトリから削除済み（Rust一本化）
 - `serve-stdio`（MCP サーバー）、`serve-daemon`、`service`（Win/macOS）を提供
 - エフェクト操作は以下をサポート
   - `apply-effect`
