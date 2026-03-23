@@ -16,7 +16,7 @@ jobs:
       on_main: ${{ steps.check.outputs.on_main }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -29,7 +29,7 @@ jobs:
             exit 0
           fi
 
-          git fetch origin main --depth=1
+          git fetch origin main
           if git merge-base --is-ancestor "$GITHUB_SHA" "origin/main"; then
             echo "on_main=true" >> "$GITHUB_OUTPUT"
           else
@@ -47,13 +47,13 @@ jobs:
       WIN_SIGN_TIMESTAMP_URL: ${{ secrets.WIN_SIGN_TIMESTAMP_URL }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v5
         with:
           dotnet-version: "8.0.x"
 
@@ -91,7 +91,7 @@ jobs:
           Write-Warning "Windows signing skipped. Set WIN_SIGN_PFX_BASE64 and WIN_SIGN_PFX_PASSWORD secrets."
 
       - name: Upload Windows RC artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: windows-rc-artifacts
           path: dist/windows/*
@@ -110,7 +110,7 @@ jobs:
       APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -145,7 +145,7 @@ jobs:
           echo "::warning::macOS notarization skipped. Set MAC_CODESIGN_IDENTITY, APPLE_ID, APPLE_TEAM_ID, APPLE_APP_SPECIFIC_PASSWORD."
 
       - name: Upload macOS RC artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: macos-rc-artifacts
           path: dist/macos/*
@@ -159,23 +159,39 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download Windows artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: windows-rc-artifacts
           path: dist/release/windows
 
       - name: Download macOS artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: macos-rc-artifacts
           path: dist/release/macos
 
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.ref_name }}
-          generate_release_notes: true
-          prerelease: ${{ contains(github.ref_name, '-rc') }}
-          files: |
-            dist/release/windows/**/*
-            dist/release/macos/**/*
+      - name: Create or update GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          tag="${GITHUB_REF_NAME}"
+          repo="${GITHUB_REPOSITORY}"
+          mapfile -t files < <(find dist/release -type f)
+          if [[ "${#files[@]}" -eq 0 ]]; then
+            echo "No release artifacts were found."
+            exit 1
+          fi
+
+          if gh release view "$tag" --repo "$repo" >/dev/null 2>&1; then
+            gh release upload "$tag" "${files[@]}" --clobber --repo "$repo"
+            exit 0
+          fi
+
+          args=(release create "$tag" --repo "$repo" --title "$tag" --generate-notes)
+          if [[ "$tag" == *"-rc"* ]]; then
+            args+=(--prerelease)
+          fi
+          gh "${args[@]}" "${files[@]}"
