@@ -179,19 +179,27 @@ jobs:
 
           tag="${GITHUB_REF_NAME}"
           repo="${GITHUB_REPOSITORY}"
-          mapfile -t files < <(find dist/release -type f)
+
+          # Collect only distributable artifacts (exclude intermediate files like stage/pkgroot).
+          mapfile -t files < <(
+            find dist/release/windows dist/release/macos -maxdepth 1 -type f \
+              \( -name "*.zip" -o -name "*.msi" -o -name "*.pkg" -o -name "*.tar.gz" -o -name "*.dmg" \) \
+              | sort
+          )
           if [[ "${#files[@]}" -eq 0 ]]; then
             echo "No release artifacts were found."
             exit 1
           fi
 
-          if gh release view "$tag" --repo "$repo" >/dev/null 2>&1; then
-            gh release upload "$tag" "${files[@]}" --clobber --repo "$repo"
-            exit 0
+          printf "Release assets:\n"
+          printf "  - %s\n" "${files[@]}"
+
+          if ! gh release view "$tag" --repo "$repo" >/dev/null 2>&1; then
+            create_args=(release create "$tag" --repo "$repo" --title "$tag" --generate-notes)
+            if [[ "$tag" == *"-rc"* ]]; then
+              create_args+=(--prerelease)
+            fi
+            gh "${create_args[@]}"
           fi
 
-          args=(release create "$tag" --repo "$repo" --title "$tag" --generate-notes)
-          if [[ "$tag" == *"-rc"* ]]; then
-            args+=(--prerelease)
-          fi
-          gh "${args[@]}" "${files[@]}"
+          gh release upload "$tag" "${files[@]}" --clobber --repo "$repo"
