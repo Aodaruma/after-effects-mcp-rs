@@ -1,68 +1,120 @@
-# after-effects-mcp-rs
+# 🎬 After Effects MCP Server (Rust)
 
-Rust 実装の After Effects MCP サーバーです。  
-After Effects 側の `mcp-bridge-auto.jsx` と、`~/Documents/ae-mcp-bridge` の command/result ファイルを使って連携します。
+![Rust](https://img.shields.io/badge/rust-stable-orange)
+![Build](https://img.shields.io/badge/build-passing-success)
+![License](https://img.shields.io/badge/license-MIT-blue)
+![Platform](https://img.shields.io/badge/platform-After%20Effects-blue)
 
-## 現状（2026-03-23）
+A Rust-based MCP server for Adobe After Effects.
+It communicates with AE through the `mcp-bridge-auto.jsx` panel and file bridge (`ae_command.json` / `ae_mcp_result.json`).
 
-- 実運用の中心は Rust バイナリ `ae-mcp`
-- 旧 npm/TypeScript サーバー実装はこのリポジトリから削除済み（Rust一本化）
-- `serve-stdio`（MCP サーバー）、`serve-daemon`、`service`（Win/macOS）を提供
-- エフェクト操作は以下をサポート
-  - `apply-effect`
-  - `apply-effect-template`
-  - `list-supported-effects`（既知エフェクトの利用可否チェック）
-  - `describe-effect`（エフェクトのパラメータ一覧取得）
-- ターゲット指定は `compId/layerId`（推奨）・`compName/layerName`・`compIndex/layerIndex`
+- 日本語版: [README-ja.md](README-ja.md)
 
-## 必要環境
+## Table of Contents
 
-- Adobe After Effects（2022+ 推奨）
-- Rust stable / Cargo
-- Windows または macOS
+- [Features](#features)
+  - [Core Composition Features](#core-composition-features)
+  - [Layer and Animation Features](#layer-and-animation-features)
+  - [Effects and Introspection](#effects-and-introspection)
+  - [Operations and Distribution](#operations-and-distribution)
+- [Setup](#setup)
+  - [Prerequisites](#prerequisites)
+  - [Build](#build)
+  - [Install AE Bridge Panel](#install-ae-bridge-panel)
+  - [Configure After Effects](#configure-after-effects)
+  - [Register MCP Server](#register-mcp-server)
+- [Quick Validation](#quick-validation)
+- [Usage Examples](#usage-examples)
+- [Available MCP Tools](#available-mcp-tools)
+- [Troubleshooting](#troubleshooting)
+- [Docs](#docs)
+- [License](#license)
 
-## クイックスタート
+## Features
 
-### 1. ビルド
+### Core Composition Features
+
+- Create compositions with custom width, height, duration, framerate, and background.
+- List compositions and fetch project metadata.
+- Keep MCP prompt/resource/tool naming compatible with the previous TS server.
+
+### Layer and Animation Features
+
+- Create text, shape, and solid/adjustment layers.
+- Update layer properties.
+- Set keyframes and expressions via MCP tools.
+- Resolve targets by:
+  - `compId/layerId` (recommended)
+  - `compName/layerName`
+  - `compIndex/layerIndex`
+
+### Effects and Introspection
+
+- Apply effects directly (`apply-effect`) or via templates (`apply-effect-template`).
+- `smooth-gradient` template with Gradient Ramp fallback support.
+- `list-supported-effects`: probe a known catalog and report availability in current AE environment.
+- `describe-effect`: temporarily add an effect and return available parameter metadata.
+- ExtendScript compatibility fix for older AE scripting engines (no `Object.keys` dependency).
+
+### Operations and Distribution
+
+- `serve-stdio` for MCP clients.
+- `serve-daemon` and `service` subcommands for OS-level service management.
+- Windows/macOS packaging scripts and CI workflows for installer artifacts.
+- Repository is now Rust-only (legacy npm/TypeScript server files were removed).
+
+## Setup
+
+### Prerequisites
+
+- Adobe After Effects (2022+ recommended)
+- Rust stable + Cargo
+- Windows or macOS
+
+### Build
 
 ```bash
 cargo build --release -p ae-mcp
 ```
 
+Artifacts:
+
 - Windows: `target/release/ae-mcp.exe`
 - macOS: `target/release/ae-mcp`
 
-### 2. Bridge パネル導入（npm不要）
+### Install AE Bridge Panel
 
-Windows:
+Windows (PowerShell):
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\install-bridge.ps1
 ```
 
-macOS:
+macOS (bash):
 
 ```bash
 bash ./scripts/install-bridge.sh
 ```
 
-### 3. After Effects 側設定
+### Configure After Effects
 
-1. `Edit > Preferences > Scripting & Expressions`
-2. `Allow Scripts to Write Files and Access Network` を有効化
-3. After Effects 再起動
-4. `Window > mcp-bridge-auto.jsx` を開く
-5. `Auto-run commands` を ON
+1. Open `Edit > Preferences > Scripting & Expressions`.
+2. Enable `Allow Scripts to Write Files and Access Network`.
+3. Restart After Effects.
+4. Open `Window > mcp-bridge-auto.jsx`.
+5. Turn on `Auto-run commands`.
 
-### 4. Codex MCP 設定例
+### Register MCP Server
+
+Codex CLI example:
 
 ```bash
-codex mcp add aftereffects -- "<ABSOLUTE_PATH_TO>/target/release/ae-mcp.exe" serve-stdio
+codex mcp add aftereffects -- "<ABSOLUTE_PATH>/target/release/ae-mcp.exe" serve-stdio
 ```
 
-macOS は実行ファイル名から `.exe` を外してください。
+For macOS, remove `.exe`.
 
-### 5. 動作確認
+## Quick Validation
 
 ```powershell
 .\target\release\ae-mcp.exe health
@@ -70,69 +122,87 @@ macOS は実行ファイル名から `.exe` を外してください。
 .\target\release\ae-mcp.exe bridge get-results
 ```
 
-## 主要ツール
+## Usage Examples
 
-- 基本
-  - `run-script`
-  - `get-results`
-  - `get-help`
-  - `create-composition`
-  - `setLayerKeyframe`
-  - `setLayerExpression`
-- エフェクト
-  - `apply-effect`
-  - `apply-effect-template`
-  - `list-supported-effects`
-  - `describe-effect`
-  - `mcp_aftereffects_get_effects_help`
+Apply an effect using stable IDs:
 
-`run-script` は allowlist 方式です（任意スクリプト実行ではありません）。
+```json
+{
+  "compId": 1,
+  "layerId": 15,
+  "effectMatchName": "ADBE Gaussian Blur 2",
+  "effectSettings": {
+    "Blurriness": 18
+  }
+}
+```
 
-## ID 指定について
+Describe available parameters for an effect:
 
-- Composition ID は `listCompositions` 結果で取得可能
-- Layer ID は `createTextLayer` / `createShapeLayer` / `createSolidLayer` / `applyEffect` / `applyEffectTemplate` の結果で取得可能
-- `getLayerInfo` でも Layer ID を返します（アクティブコンポ前提）
+```json
+{
+  "compId": 1,
+  "layerId": 15,
+  "effectMatchName": "ADBE Glo2"
+}
+```
 
-推奨は `compId/layerId` での指定です。
+List effect availability in current environment:
 
-## エフェクト調査の推奨フロー
+```json
+{
+  "compName": "Main Comp",
+  "layerName": "FX Layer",
+  "includeUnavailable": true
+}
+```
 
-1. `list-supported-effects` で環境可用性を確認
-2. `describe-effect` で対象エフェクトのパラメータ名・範囲を確認
-3. `apply-effect` で `effectSettings` を指定して適用
+## Available MCP Tools
 
-補足:
-- プラグイン系エフェクトは表示名と `matchName` が一致しない場合があります。
-- 例: Glow は環境により `ADBE Glow` ではなく `ADBE Glo2` の場合があります。
+| Tool | Description |
+|---|---|
+| `run-script` | Queue an allowlisted bridge script |
+| `get-results` | Read latest bridge result |
+| `get-help` | General integration help |
+| `create-composition` | Create composition |
+| `setLayerKeyframe` | Set a keyframe |
+| `setLayerExpression` | Set/remove expression |
+| `apply-effect` | Apply effect to layer |
+| `apply-effect-template` | Apply predefined template |
+| `list-supported-effects` | Probe known effect catalog |
+| `describe-effect` | Inspect effect parameter metadata |
+| `mcp_aftereffects_applyEffect` | Direct call variant |
+| `mcp_aftereffects_applyEffectTemplate` | Direct call variant |
+| `mcp_aftereffects_listSupportedEffects` | Direct call variant |
+| `mcp_aftereffects_describeEffect` | Direct call variant |
+| `mcp_aftereffects_get_effects_help` | Effects help text |
+| `run-bridge-test` | Queue bridge/effects smoke test |
 
-## トラブルシュート
+## Troubleshooting
 
-### `ae_command.json` が `pending` のまま
+- `ae_command.json` stays `pending`:
+  - AE panel not open
+  - `Auto-run commands` is OFF
+  - panel not reloaded after script update
+- `get-results` returns stale/waiting:
+  - check `~/Documents/ae-mcp-bridge/ae_command.json` and `ae_mcp_result.json` timestamps
+- `service install` access denied on Windows:
+  - run elevated shell (`gsudo` or Administrator PowerShell)
+- `-AfterEffectsPath` gets split into `C:\Program`:
+  - quote with single quotes:
+    - `-AfterEffectsPath 'C:\Program Files\Adobe\Adobe After Effects 2025'`
 
-- `mcp-bridge-auto.jsx` が開いていない
-- `Auto-run commands` が OFF
-- パネル再読込漏れ（更新後は再オープン推奨）
-
-### `get-results` が `waiting` / stale warning
-
-- AE 側パネル未実行の可能性が高いです。
-- `~/Documents/ae-mcp-bridge/ae_command.json` / `ae_mcp_result.json` の更新時刻を確認してください。
-
-### Windows `service install` で Access Denied
-
-- 管理者権限で実行してください（`gsudo` または管理者 PowerShell）。
-
-### PowerShell で `-AfterEffectsPath` が `C:\Program` に切れる
-
-- 引数をシングルクォートで渡してください。
-  - 例: `-AfterEffectsPath 'C:\Program Files\Adobe\Adobe After Effects 2025'`
-
-## 関連ドキュメント
+## Docs
 
 - [Rust migration specification](docs/specification-rust-migration.md)
 - [Development stages](docs/development-stages.md)
-- [Codex MCP setup guide](docs/setup-codex-mcp.md)
+- [Codex MCP setup](docs/setup-codex-mcp.md)
 - [Installer E2E guide](docs/installer-e2e.md)
+- [Signing and RC guide](docs/signing-and-rc.md)
+- [TS to Rust migration guide](docs/migration-guide-ts-to-rust.md)
 - [Operations runbook](docs/operations-runbook.md)
 - [GA release checklist](docs/release-checklist.md)
+
+## License
+
+This project is licensed under the MIT License. See [LICENSE](LICENSE).
