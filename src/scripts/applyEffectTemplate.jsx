@@ -14,10 +14,56 @@ function listOwnKeys(obj) {
     return keys;
 }
 
+function parseNumericId(value) {
+    if (value === undefined || value === null || value === "") {
+        return null;
+    }
+    var parsed = parseInt(value, 10);
+    if (isNaN(parsed)) {
+        return null;
+    }
+    return parsed;
+}
+
+function getCompId(comp) {
+    try {
+        if (comp && comp.id !== undefined && comp.id !== null) {
+            var parsed = parseInt(comp.id, 10);
+            if (!isNaN(parsed)) {
+                return parsed;
+            }
+        }
+    } catch (_e) {}
+    return null;
+}
+
+function getLayerId(layer) {
+    try {
+        if (layer && layer.id !== undefined && layer.id !== null) {
+            var parsed = parseInt(layer.id, 10);
+            if (!isNaN(parsed)) {
+                return parsed;
+            }
+        }
+    } catch (_e) {}
+    return null;
+}
+
 function resolveComposition(args) {
+    var compId = parseNumericId(args.compId);
     var compName = args.compName || args.compositionName;
     var compIndex = args.compIndex;
     var i;
+
+    if (compId !== null) {
+        for (i = 1; i <= app.project.numItems; i++) {
+            var byId = app.project.item(i);
+            if (byId instanceof CompItem && getCompId(byId) === compId) {
+                return byId;
+            }
+        }
+        throw new Error("Composition not found by id " + compId);
+    }
 
     if (compName) {
         for (i = 1; i <= app.project.numItems; i++) {
@@ -55,9 +101,20 @@ function resolveComposition(args) {
 }
 
 function resolveLayer(comp, args) {
+    var layerId = parseNumericId(args.layerId);
     var layerName = args.layerName;
     var layerIndex = args.layerIndex;
     var j;
+
+    if (layerId !== null) {
+        for (j = 1; j <= comp.numLayers; j++) {
+            var byId = comp.layer(j);
+            if (getLayerId(byId) === layerId) {
+                return byId;
+            }
+        }
+        throw new Error("Layer not found by id " + layerId + " in composition '" + comp.name + "'");
+    }
 
     if (layerName) {
         for (j = 1; j <= comp.numLayers; j++) {
@@ -335,7 +392,8 @@ function applyEffectTemplate(args) {
             appliedEffects: appliedEffects,
             layer: {
                 name: layer.name,
-                index: layer.index
+                index: layer.index,
+                id: getLayerId(layer)
             },
             composition: {
                 name: comp.name,

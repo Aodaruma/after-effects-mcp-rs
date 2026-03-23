@@ -17,6 +17,8 @@ pub const ALLOWED_SCRIPTS: &[&str] = &[
     "setLayerExpression",
     "applyEffect",
     "applyEffectTemplate",
+    "listSupportedEffects",
+    "describeEffect",
     "test-animation",
     "bridgeTestEffects",
 ];
@@ -204,8 +206,10 @@ pub fn tool_specs() -> Vec<ToolSpec> {
             input_schema: json!({
                 "type": "object",
                 "properties": {
+                    "compId": { "type": "integer", "minimum": 1 },
                     "compIndex": { "type": "integer", "minimum": 1 },
                     "compName": { "type": "string" },
+                    "layerId": { "type": "integer", "minimum": 1 },
                     "layerIndex": { "type": "integer", "minimum": 1 },
                     "layerName": { "type": "string" },
                     "effectName": { "type": "string" },
@@ -222,8 +226,10 @@ pub fn tool_specs() -> Vec<ToolSpec> {
             input_schema: json!({
                 "type": "object",
                 "properties": {
+                    "compId": { "type": "integer", "minimum": 1 },
                     "compIndex": { "type": "integer", "minimum": 1 },
                     "compName": { "type": "string" },
+                    "layerId": { "type": "integer", "minimum": 1 },
                     "layerIndex": { "type": "integer", "minimum": 1 },
                     "layerName": { "type": "string" },
                     "templateName": {
@@ -247,13 +253,48 @@ pub fn tool_specs() -> Vec<ToolSpec> {
             }),
         },
         ToolSpec {
+            name: "list-supported-effects",
+            description: "List known effects and verify availability in the current After Effects environment",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "compId": { "type": "integer", "minimum": 1 },
+                    "compIndex": { "type": "integer", "minimum": 1 },
+                    "compName": { "type": "string" },
+                    "layerId": { "type": "integer", "minimum": 1 },
+                    "layerIndex": { "type": "integer", "minimum": 1 },
+                    "layerName": { "type": "string" },
+                    "includeUnavailable": { "type": "boolean" }
+                }
+            }),
+        },
+        ToolSpec {
+            name: "describe-effect",
+            description: "Describe available parameters for a specific effect by temporarily probing it on a layer",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "compId": { "type": "integer", "minimum": 1 },
+                    "compIndex": { "type": "integer", "minimum": 1 },
+                    "compName": { "type": "string" },
+                    "layerId": { "type": "integer", "minimum": 1 },
+                    "layerIndex": { "type": "integer", "minimum": 1 },
+                    "layerName": { "type": "string" },
+                    "effectName": { "type": "string" },
+                    "effectMatchName": { "type": "string" }
+                }
+            }),
+        },
+        ToolSpec {
             name: "mcp_aftereffects_applyEffect",
             description: "Apply an effect to a layer in After Effects",
             input_schema: json!({
                 "type": "object",
                 "properties": {
+                    "compId": { "type": "integer", "minimum": 1 },
                     "compIndex": { "type": "integer", "minimum": 1 },
                     "compName": { "type": "string" },
+                    "layerId": { "type": "integer", "minimum": 1 },
                     "layerIndex": { "type": "integer", "minimum": 1 },
                     "layerName": { "type": "string" },
                     "effectName": { "type": "string" },
@@ -268,8 +309,10 @@ pub fn tool_specs() -> Vec<ToolSpec> {
             input_schema: json!({
                 "type": "object",
                 "properties": {
+                    "compId": { "type": "integer", "minimum": 1 },
                     "compIndex": { "type": "integer", "minimum": 1 },
                     "compName": { "type": "string" },
+                    "layerId": { "type": "integer", "minimum": 1 },
                     "layerIndex": { "type": "integer", "minimum": 1 },
                     "layerName": { "type": "string" },
                     "templateName": {
@@ -290,6 +333,39 @@ pub fn tool_specs() -> Vec<ToolSpec> {
                     "customSettings": { "type": "object" }
                 },
                 "required": ["templateName"]
+            }),
+        },
+        ToolSpec {
+            name: "mcp_aftereffects_listSupportedEffects",
+            description: "List known effects and verify availability in the current After Effects environment",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "compId": { "type": "integer", "minimum": 1 },
+                    "compIndex": { "type": "integer", "minimum": 1 },
+                    "compName": { "type": "string" },
+                    "layerId": { "type": "integer", "minimum": 1 },
+                    "layerIndex": { "type": "integer", "minimum": 1 },
+                    "layerName": { "type": "string" },
+                    "includeUnavailable": { "type": "boolean" }
+                }
+            }),
+        },
+        ToolSpec {
+            name: "mcp_aftereffects_describeEffect",
+            description: "Describe available parameters for a specific effect by temporarily probing it on a layer",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "compId": { "type": "integer", "minimum": 1 },
+                    "compIndex": { "type": "integer", "minimum": 1 },
+                    "compName": { "type": "string" },
+                    "layerId": { "type": "integer", "minimum": 1 },
+                    "layerIndex": { "type": "integer", "minimum": 1 },
+                    "layerName": { "type": "string" },
+                    "effectName": { "type": "string" },
+                    "effectMatchName": { "type": "string" }
+                }
             }),
         },
         ToolSpec {
@@ -392,6 +468,8 @@ Available scripts:
 - setLayerExpression
 - applyEffect
 - applyEffectTemplate
+- listSupportedEffects
+- describeEffect
 "#
 }
 
@@ -419,6 +497,10 @@ Templates:
 - smooth-gradient
 - cinematic-look
 - text-pop
+
+Additional tools:
+- list-supported-effects
+- describe-effect
 "#
 }
 

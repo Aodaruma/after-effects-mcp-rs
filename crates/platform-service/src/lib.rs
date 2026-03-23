@@ -126,7 +126,10 @@ fn install(cfg: &ServiceConfig) -> Result<String> {
     if !output.status.success() {
         return Err(anyhow!(render_output("launchctl load", output)));
     }
-    Ok(format!("launch agent installed at {}", plist_path.display()))
+    Ok(format!(
+        "launch agent installed at {}",
+        plist_path.display()
+    ))
 }
 
 #[cfg(target_os = "macos")]
@@ -189,12 +192,16 @@ fn status(cfg: &ServiceConfig) -> Result<String> {
 
 #[cfg(not(any(target_os = "windows", target_os = "macos")))]
 fn install(_cfg: &ServiceConfig) -> Result<String> {
-    Err(anyhow!("service install is supported only on Windows/macOS"))
+    Err(anyhow!(
+        "service install is supported only on Windows/macOS"
+    ))
 }
 
 #[cfg(not(any(target_os = "windows", target_os = "macos")))]
 fn uninstall(_cfg: &ServiceConfig) -> Result<String> {
-    Err(anyhow!("service uninstall is supported only on Windows/macOS"))
+    Err(anyhow!(
+        "service uninstall is supported only on Windows/macOS"
+    ))
 }
 
 #[cfg(not(any(target_os = "windows", target_os = "macos")))]

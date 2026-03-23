@@ -92,8 +92,8 @@ impl BridgeClient {
             }))?);
         }
 
-        let metadata =
-            fs::metadata(path).with_context(|| format!("failed to stat file: {}", path.display()))?;
+        let metadata = fs::metadata(path)
+            .with_context(|| format!("failed to stat file: {}", path.display()))?;
         let modified = metadata
             .modified()
             .unwrap_or_else(|_| SystemTime::now() - stale_threshold);
@@ -128,7 +128,9 @@ impl BridgeClient {
                     // continue polling
                 } else if let Ok(value) = serde_json::from_str::<Value>(&content) {
                     let matched = expected_command
-                        .map(|cmd| value.get("_commandExecuted").and_then(Value::as_str) == Some(cmd))
+                        .map(|cmd| {
+                            value.get("_commandExecuted").and_then(Value::as_str) == Some(cmd)
+                        })
                         .unwrap_or(true);
                     if matched {
                         return Ok(content);
@@ -241,7 +243,11 @@ mod tests {
                 "status": "success",
                 "_commandExecuted": "listCompositions"
             });
-            fs::write(result_path, serde_json::to_string(&payload).expect("serialize")).expect("write");
+            fs::write(
+                result_path,
+                serde_json::to_string(&payload).expect("serialize"),
+            )
+            .expect("write");
         });
 
         let raw = bridge

@@ -73,6 +73,7 @@ function createTextLayer(args) {
             layer: {
                 name: textLayer.name,
                 index: textLayer.index,
+                id: getLayerId(textLayer),
                 type: "text",
                 inPoint: textLayer.inPoint,
                 outPoint: textLayer.outPoint,
@@ -86,6 +87,18 @@ function createTextLayer(args) {
             message: error.toString()
         }, null, 2);
     }
+}
+
+function getLayerId(layer) {
+    try {
+        if (layer && layer.id !== undefined && layer.id !== null) {
+            var parsed = parseInt(layer.id, 10);
+            if (!isNaN(parsed)) {
+                return parsed;
+            }
+        }
+    } catch (_e) {}
+    return null;
 }
 
 // Read arguments from the file (passed by the Node.js script)

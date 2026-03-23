@@ -44,6 +44,7 @@ function getLayerInfo() {
             for (var j = 1; j <= item.numLayers; j++) {
                 var layer = item.layer(j);
                 var layerData = {
+                    id: getLayerId(layer),
                     name: layer.name,
                     index: layer.index,
                     enabled: layer.enabled,
@@ -75,6 +76,18 @@ function getLayerInfo() {
     }
     
     return JSON.stringify(result, null, 2);
+}
+
+function getLayerId(layer) {
+    try {
+        if (layer && layer.id !== undefined && layer.id !== null) {
+            var parsed = parseInt(layer.id, 10);
+            if (!isNaN(parsed)) {
+                return parsed;
+            }
+        }
+    } catch (_e) {}
+    return null;
 }
 
 function determineLayerType(layer) {

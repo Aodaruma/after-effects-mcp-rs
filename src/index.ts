@@ -183,6 +183,8 @@ server.tool(
       "setLayerExpression",
       "applyEffect",
       "applyEffectTemplate",
+      "listSupportedEffects",
+      "describeEffect",
       "test-animation",
       "bridgeTestEffects"
     ];
@@ -360,6 +362,8 @@ Available scripts:
 - setLayerExpression: Set an expression for a layer property
 - applyEffect: Apply an effect to a layer
 - applyEffectTemplate: Apply a predefined effect template to a layer
+- listSupportedEffects: List known effects and check availability in current AE
+- describeEffect: Get available parameters for a specific effect
 
 Effect Templates:
 - gaussian-blur: Simple Gaussian blur effect
@@ -636,8 +640,10 @@ server.tool(
   "apply-effect",
   "Apply an effect to a layer in After Effects",
   {
+    compId: z.number().int().positive().optional().describe("Stable composition id from list-compositions output."),
     compIndex: z.number().int().positive().optional().describe("1-based index of the target composition in the project panel."),
     compName: z.string().optional().describe("Optional composition name. Preferred over index when provided."),
+    layerId: z.number().int().positive().optional().describe("Stable layer id from get-layer-info output (preferred)."),
     layerIndex: z.number().int().positive().optional().describe("1-based index of the target layer within the composition."),
     layerName: z.string().optional().describe("Optional layer name. Preferred over index when provided."),
     effectName: z.string().optional().describe("Display name of the effect to apply (e.g., 'Gaussian Blur')."),
@@ -679,8 +685,10 @@ server.tool(
   "apply-effect-template",
   "Apply a predefined effect template to a layer in After Effects",
   {
+    compId: z.number().int().positive().optional().describe("Stable composition id from list-compositions output."),
     compIndex: z.number().int().positive().optional().describe("1-based index of the target composition in the project panel."),
     compName: z.string().optional().describe("Optional composition name. Preferred over index when provided."),
+    layerId: z.number().int().positive().optional().describe("Stable layer id from get-layer-info output (preferred)."),
     layerIndex: z.number().int().positive().optional().describe("1-based index of the target layer within the composition."),
     layerName: z.string().optional().describe("Optional layer name. Preferred over index when provided."),
     templateName: z.enum([
@@ -725,6 +733,95 @@ server.tool(
   }
 );
 
+server.tool(
+  "list-supported-effects",
+  "List known effects and verify availability in the current After Effects environment",
+  {
+    compId: z.number().int().positive().optional().describe("Stable composition id from list-compositions output."),
+    compIndex: z.number().int().positive().optional().describe("1-based composition index fallback."),
+    compName: z.string().optional().describe("Composition name fallback."),
+    layerId: z.number().int().positive().optional().describe("Stable layer id to probe on (preferred)."),
+    layerIndex: z.number().int().positive().optional().describe("1-based layer index fallback."),
+    layerName: z.string().optional().describe("Layer name fallback."),
+    includeUnavailable: z.boolean().optional().describe("Include unavailable effects in response.")
+  },
+  async (parameters) => {
+    try {
+      writeCommandFile("listSupportedEffects", parameters);
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Command to list supported effects has been queued.\n` +
+                  `Use the "get-results" tool after a few seconds to check for confirmation.`
+          }
+        ]
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error queuing list-supported-effects command: ${String(error)}`
+          }
+        ],
+        isError: true
+      };
+    }
+  }
+);
+
+server.tool(
+  "describe-effect",
+  "Describe available parameters for a specific effect by temporarily probing it on a layer",
+  {
+    compId: z.number().int().positive().optional().describe("Stable composition id from list-compositions output."),
+    compIndex: z.number().int().positive().optional().describe("1-based composition index fallback."),
+    compName: z.string().optional().describe("Composition name fallback."),
+    layerId: z.number().int().positive().optional().describe("Stable layer id to probe on (preferred)."),
+    layerIndex: z.number().int().positive().optional().describe("1-based layer index fallback."),
+    layerName: z.string().optional().describe("Layer name fallback."),
+    effectName: z.string().optional().describe("Display name fallback (e.g., 'Gaussian Blur')."),
+    effectMatchName: z.string().optional().describe("Preferred internal effect name (e.g., 'ADBE Gaussian Blur 2').")
+  },
+  async (parameters) => {
+    try {
+      if (!parameters.effectName && !parameters.effectMatchName) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: "Error: Either effectName or effectMatchName is required."
+            }
+          ],
+          isError: true
+        };
+      }
+
+      writeCommandFile("describeEffect", parameters);
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Command to describe effect has been queued.\n` +
+                  `Use the "get-results" tool after a few seconds to check for confirmation.`
+          }
+        ]
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error queuing describe-effect command: ${String(error)}`
+          }
+        ],
+        isError: true
+      };
+    }
+  }
+);
+
 // --- END NEW EFFECTS TOOLS ---
 
 // Add direct MCP function for applying effects
@@ -732,8 +829,10 @@ server.tool(
   "mcp_aftereffects_applyEffect",
   "Apply an effect to a layer in After Effects",
   {
+    compId: z.number().int().positive().optional().describe("Stable composition id from list-compositions output."),
     compIndex: z.number().int().positive().optional().describe("1-based index of the target composition in the project panel."),
     compName: z.string().optional().describe("Optional composition name. Preferred over index when provided."),
+    layerId: z.number().int().positive().optional().describe("Stable layer id from get-layer-info output (preferred)."),
     layerIndex: z.number().int().positive().optional().describe("1-based index of the target layer within the composition."),
     layerName: z.string().optional().describe("Optional layer name. Preferred over index when provided."),
     effectName: z.string().optional().describe("Display name of the effect to apply (e.g., 'Gaussian Blur')."),
@@ -778,8 +877,10 @@ server.tool(
   "mcp_aftereffects_applyEffectTemplate",
   "Apply a predefined effect template to a layer in After Effects",
   {
+    compId: z.number().int().positive().optional().describe("Stable composition id from list-compositions output."),
     compIndex: z.number().int().positive().optional().describe("1-based index of the target composition in the project panel."),
     compName: z.string().optional().describe("Optional composition name. Preferred over index when provided."),
+    layerId: z.number().int().positive().optional().describe("Stable layer id from get-layer-info output (preferred)."),
     layerIndex: z.number().int().positive().optional().describe("1-based index of the target layer within the composition."),
     layerName: z.string().optional().describe("Optional layer name. Preferred over index when provided."),
     templateName: z.enum([
@@ -821,6 +922,97 @@ server.tool(
           {
             type: "text",
             text: `Error applying effect template: ${String(error)}`
+          }
+        ],
+        isError: true
+      };
+    }
+  }
+);
+
+server.tool(
+  "mcp_aftereffects_listSupportedEffects",
+  "List known effects and verify availability in the current After Effects environment",
+  {
+    compId: z.number().int().positive().optional().describe("Stable composition id from list-compositions output."),
+    compIndex: z.number().int().positive().optional().describe("1-based composition index fallback."),
+    compName: z.string().optional().describe("Composition name fallback."),
+    layerId: z.number().int().positive().optional().describe("Stable layer id to probe on (preferred)."),
+    layerIndex: z.number().int().positive().optional().describe("1-based layer index fallback."),
+    layerName: z.string().optional().describe("Layer name fallback."),
+    includeUnavailable: z.boolean().optional().describe("Include unavailable effects in response.")
+  },
+  async (parameters) => {
+    try {
+      writeCommandFile("listSupportedEffects", parameters);
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      const result = readResultsFromTempFile();
+      return {
+        content: [
+          {
+            type: "text",
+            text: result
+          }
+        ]
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error listing supported effects: ${String(error)}`
+          }
+        ],
+        isError: true
+      };
+    }
+  }
+);
+
+server.tool(
+  "mcp_aftereffects_describeEffect",
+  "Describe available parameters for a specific effect by temporarily probing it on a layer",
+  {
+    compId: z.number().int().positive().optional().describe("Stable composition id from list-compositions output."),
+    compIndex: z.number().int().positive().optional().describe("1-based composition index fallback."),
+    compName: z.string().optional().describe("Composition name fallback."),
+    layerId: z.number().int().positive().optional().describe("Stable layer id to probe on (preferred)."),
+    layerIndex: z.number().int().positive().optional().describe("1-based layer index fallback."),
+    layerName: z.string().optional().describe("Layer name fallback."),
+    effectName: z.string().optional().describe("Display name fallback (e.g., 'Gaussian Blur')."),
+    effectMatchName: z.string().optional().describe("Preferred internal effect name (e.g., 'ADBE Gaussian Blur 2').")
+  },
+  async (parameters) => {
+    try {
+      if (!parameters.effectName && !parameters.effectMatchName) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: "Error: Either effectName or effectMatchName is required."
+            }
+          ],
+          isError: true
+        };
+      }
+
+      writeCommandFile("describeEffect", parameters);
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      const result = readResultsFromTempFile();
+      return {
+        content: [
+          {
+            type: "text",
+            text: result
+          }
+        ]
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error describing effect: ${String(error)}`
           }
         ],
         isError: true
@@ -886,6 +1078,11 @@ The following predefined effect templates are available:
 - \`text-pop\`: Effects to make text stand out (glow and shadow)
 
 ## Example Usage
+You can target layers with any of:
+- \`compId/layerId\` (recommended, stable)
+- \`compName/layerName\`
+- \`compIndex/layerIndex\`
+
 To apply a Gaussian blur effect:
 
 \`\`\`json
@@ -906,6 +1103,16 @@ To apply the "cinematic-look" template:
   "compIndex": 1,
   "layerIndex": 1,
   "templateName": "cinematic-look"
+}
+\`\`\`
+
+To inspect available parameters for an effect:
+
+\`\`\`json
+{
+  "compName": "Main Comp",
+  "layerName": "Title",
+  "effectMatchName": "ADBE Glow"
 }
 \`\`\`
 `

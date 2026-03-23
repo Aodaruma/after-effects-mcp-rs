@@ -71,7 +71,7 @@ function createTextLayer(args) {
         if (duration > 0) { textLayer.outPoint = startTime + duration; }
         return JSON.stringify({
             status: "success", message: "Text layer created successfully",
-            layer: { name: textLayer.name, index: textLayer.index, type: "text", inPoint: textLayer.inPoint, outPoint: textLayer.outPoint, position: textLayer.property("Position").value }
+            layer: { name: textLayer.name, index: textLayer.index, id: fxGetLayerId(textLayer), type: "text", inPoint: textLayer.inPoint, outPoint: textLayer.outPoint, position: textLayer.property("Position").value }
         }, null, 2);
     } catch (error) {
         return JSON.stringify({ status: "error", message: error.toString() }, null, 2);
@@ -134,7 +134,7 @@ function createShapeLayer(args) {
         if (duration > 0) { shapeLayer.outPoint = startTime + duration; }
         return JSON.stringify({
             status: "success", message: "Shape layer created successfully",
-            layer: { name: shapeLayer.name, index: shapeLayer.index, type: "shape", shapeType: shapeType, inPoint: shapeLayer.inPoint, outPoint: shapeLayer.outPoint, position: shapeLayer.property("Position").value }
+            layer: { name: shapeLayer.name, index: shapeLayer.index, id: fxGetLayerId(shapeLayer), type: "shape", shapeType: shapeType, inPoint: shapeLayer.inPoint, outPoint: shapeLayer.outPoint, position: shapeLayer.property("Position").value }
         }, null, 2);
     } catch (error) {
         return JSON.stringify({ status: "error", message: error.toString() }, null, 2);
@@ -174,7 +174,7 @@ function createSolidLayer(args) {
         if (duration > 0) { solidLayer.outPoint = startTime + duration; }
         return JSON.stringify({
             status: "success", message: isAdjustment ? "Adjustment layer created successfully" : "Solid layer created successfully",
-            layer: { name: solidLayer.name, index: solidLayer.index, type: isAdjustment ? "adjustment" : "solid", inPoint: solidLayer.inPoint, outPoint: solidLayer.outPoint, position: solidLayer.property("Position").value, isAdjustment: solidLayer.adjustmentLayer }
+            layer: { name: solidLayer.name, index: solidLayer.index, id: fxGetLayerId(solidLayer), type: isAdjustment ? "adjustment" : "solid", inPoint: solidLayer.inPoint, outPoint: solidLayer.outPoint, position: solidLayer.property("Position").value, isAdjustment: solidLayer.adjustmentLayer }
         }, null, 2);
     } catch (error) {
         return JSON.stringify({ status: "error", message: error.toString() }, null, 2);
@@ -481,10 +481,56 @@ function fxHasOwnEntries(obj) {
     return false;
 }
 
+function fxParseNumericId(value) {
+    if (value === undefined || value === null || value === "") {
+        return null;
+    }
+    var parsed = parseInt(value, 10);
+    if (isNaN(parsed)) {
+        return null;
+    }
+    return parsed;
+}
+
+function fxGetCompId(comp) {
+    try {
+        if (comp && comp.id !== undefined && comp.id !== null) {
+            var parsed = parseInt(comp.id, 10);
+            if (!isNaN(parsed)) {
+                return parsed;
+            }
+        }
+    } catch (_e) {}
+    return null;
+}
+
+function fxGetLayerId(layer) {
+    try {
+        if (layer && layer.id !== undefined && layer.id !== null) {
+            var parsed = parseInt(layer.id, 10);
+            if (!isNaN(parsed)) {
+                return parsed;
+            }
+        }
+    } catch (_e) {}
+    return null;
+}
+
 function fxResolveComposition(args) {
+    var compId = fxParseNumericId(args.compId);
     var compName = args.compName || args.compositionName;
     var compIndex = args.compIndex;
     var i;
+
+    if (compId !== null) {
+        for (i = 1; i <= app.project.numItems; i++) {
+            var byId = app.project.item(i);
+            if (byId instanceof CompItem && fxGetCompId(byId) === compId) {
+                return byId;
+            }
+        }
+        throw new Error("Composition not found by id " + compId);
+    }
 
     if (compName) {
         for (i = 1; i <= app.project.numItems; i++) {
@@ -522,9 +568,20 @@ function fxResolveComposition(args) {
 }
 
 function fxResolveLayer(comp, args) {
+    var layerId = fxParseNumericId(args.layerId);
     var layerName = args.layerName;
     var layerIndex = args.layerIndex;
     var j;
+
+    if (layerId !== null) {
+        for (j = 1; j <= comp.numLayers; j++) {
+            var byId = comp.layer(j);
+            if (fxGetLayerId(byId) === layerId) {
+                return byId;
+            }
+        }
+        throw new Error("Layer not found by id " + layerId + " in composition '" + comp.name + "'");
+    }
 
     if (layerName) {
         for (j = 1; j <= comp.numLayers; j++) {
@@ -658,7 +715,8 @@ function applyEffect(args) {
             effect: effectResult,
             layer: {
                 name: layer.name,
-                index: layer.index
+                index: layer.index,
+                id: fxGetLayerId(layer)
             },
             composition: {
                 name: comp.name,
@@ -925,7 +983,8 @@ function applyEffectTemplate(args) {
             appliedEffects: appliedEffects,
             layer: {
                 name: layer.name,
-                index: layer.index
+                index: layer.index,
+                id: fxGetLayerId(layer)
             },
             composition: {
                 name: comp.name,
@@ -937,6 +996,294 @@ function applyEffectTemplate(args) {
             status: "error",
             message: error.toString()
         }, null, 2);
+    }
+}
+
+function fxHasExplicitLayerTarget(args) {
+    return args.layerId !== undefined ||
+        args.layerName !== undefined ||
+        args.layerIndex !== undefined;
+}
+
+function fxResolveProbeLayer(comp, args) {
+    if (fxHasExplicitLayerTarget(args)) {
+        return {
+            layer: fxResolveLayer(comp, args),
+            cleanup: false
+        };
+    }
+
+    if (comp.selectedLayers && comp.selectedLayers.length > 0) {
+        return {
+            layer: comp.selectedLayers[0],
+            cleanup: false
+        };
+    }
+
+    if (comp.numLayers > 0) {
+        return {
+            layer: comp.layer(1),
+            cleanup: false
+        };
+    }
+
+    var probeLayer = comp.layers.addSolid(
+        [0.5, 0.5, 0.5],
+        "__mcp_probe_layer__",
+        Math.max(1, comp.width),
+        Math.max(1, comp.height),
+        1,
+        Math.max(1, comp.duration)
+    );
+    probeLayer.enabled = false;
+    return {
+        layer: probeLayer,
+        cleanup: true
+    };
+}
+
+function fxKnownEffectsCatalog() {
+    return [
+        { name: "Gaussian Blur", matchName: "ADBE Gaussian Blur 2", category: "Blur & Sharpen" },
+        { name: "Directional Blur", matchName: "ADBE Directional Blur", category: "Blur & Sharpen" },
+        { name: "Brightness & Contrast", matchName: "ADBE Brightness & Contrast 2", category: "Color Correction" },
+        { name: "Color Balance (HLS)", matchName: "ADBE Color Balance (HLS)", category: "Color Correction" },
+        { name: "Curves", matchName: "ADBE CurvesCustom", category: "Color Correction" },
+        { name: "Vibrance", matchName: "ADBE Vibrance", category: "Color Correction" },
+        { name: "Glow", matchName: "ADBE Glow", category: "Stylize" },
+        { name: "Drop Shadow", matchName: "ADBE Drop Shadow", category: "Perspective" },
+        { name: "Gradient Ramp", matchName: "ADBE Ramp", category: "Generate" },
+        { name: "4 Color Gradient", matchName: "ADBE 4ColorGradient", category: "Generate" },
+        { name: "Fractal Noise", matchName: "ADBE Fractal Noise", category: "Noise & Grain" },
+        { name: "Noise", matchName: "ADBE Noise", category: "Noise & Grain" }
+    ];
+}
+
+function fxProbeEffect(layer, entry) {
+    var candidates = [];
+    var failures = [];
+    fxPushUnique(candidates, entry.matchName);
+    fxPushUnique(candidates, entry.name);
+
+    if (entry.matchName === "ADBE Ramp") {
+        fxPushUnique(candidates, "Ramp");
+        fxPushUnique(candidates, "ADBE 4ColorGradient");
+        fxPushUnique(candidates, "ADBE 4 Color Gradient");
+    }
+
+    for (var i = 0; i < candidates.length; i++) {
+        var candidate = candidates[i];
+        var addedEffect = null;
+        try {
+            addedEffect = layer.Effects.addProperty(candidate);
+            if (addedEffect) {
+                var resolvedName = addedEffect.name;
+                var resolvedMatchName = addedEffect.matchName;
+                try {
+                    addedEffect.remove();
+                } catch (_removeErr) {}
+                return {
+                    available: true,
+                    usedIdentifier: candidate,
+                    resolvedName: resolvedName,
+                    resolvedMatchName: resolvedMatchName
+                };
+            }
+        } catch (e) {
+            failures.push(candidate + ": " + e.toString());
+        }
+    }
+
+    return {
+        available: false,
+        error: failures.join(" ; ")
+    };
+}
+
+function fxSerializeValue(value) {
+    if (value === null || value === undefined) {
+        return value;
+    }
+    var t = typeof value;
+    if (t === "number" || t === "string" || t === "boolean") {
+        return value;
+    }
+    if (value instanceof Array) {
+        var arr = [];
+        for (var i = 0; i < value.length; i++) {
+            arr.push(fxSerializeValue(value[i]));
+        }
+        return arr;
+    }
+    try {
+        return value.toString();
+    } catch (_e) {}
+    return null;
+}
+
+function fxDescribeEffectProperties(effect) {
+    var properties = [];
+
+    for (var i = 1; i <= effect.numProperties; i++) {
+        var prop = effect.property(i);
+        if (!prop) {
+            continue;
+        }
+
+        var row = {
+            index: i,
+            name: prop.name || "",
+            matchName: prop.matchName || "",
+            propertyValueType: prop.propertyValueType,
+            canSetExpression: !!prop.canSetExpression
+        };
+
+        try {
+            if (prop.hasMin) {
+                row.minValue = prop.minValue;
+            }
+        } catch (_minErr) {}
+
+        try {
+            if (prop.hasMax) {
+                row.maxValue = prop.maxValue;
+            }
+        } catch (_maxErr) {}
+
+        try {
+            row.currentValue = fxSerializeValue(prop.value);
+        } catch (_valueErr) {}
+
+        properties.push(row);
+    }
+
+    return properties;
+}
+
+function listSupportedEffects(args) {
+    var probeContext = null;
+
+    try {
+        var options = args || {};
+        var includeUnavailable = options.includeUnavailable === true;
+        var comp = fxResolveComposition(options);
+        probeContext = fxResolveProbeLayer(comp, options);
+        var probeLayer = probeContext.layer;
+        var catalog = fxKnownEffectsCatalog();
+        var effects = [];
+        var availableCount = 0;
+        var unavailableCount = 0;
+
+        for (var i = 0; i < catalog.length; i++) {
+            var entry = catalog[i];
+            var probe = fxProbeEffect(probeLayer, entry);
+            if (probe.available) {
+                availableCount++;
+            } else {
+                unavailableCount++;
+            }
+            if (probe.available || includeUnavailable) {
+                effects.push({
+                    name: entry.name,
+                    matchName: entry.matchName,
+                    category: entry.category,
+                    available: probe.available,
+                    usedIdentifier: probe.usedIdentifier || null,
+                    resolvedName: probe.resolvedName || null,
+                    resolvedMatchName: probe.resolvedMatchName || null,
+                    error: probe.error || null
+                });
+            }
+        }
+
+        return JSON.stringify({
+            status: "success",
+            composition: {
+                id: fxGetCompId(comp),
+                name: comp.name
+            },
+            probeLayer: {
+                id: fxGetLayerId(probeLayer),
+                name: probeLayer.name,
+                index: probeLayer.index,
+                temporary: probeContext.cleanup
+            },
+            summary: {
+                catalogSize: catalog.length,
+                availableCount: availableCount,
+                unavailableCount: unavailableCount
+            },
+            effects: effects
+        }, null, 2);
+    } catch (error) {
+        return JSON.stringify({
+            status: "error",
+            message: error.toString()
+        }, null, 2);
+    } finally {
+        if (probeContext && probeContext.cleanup && probeContext.layer) {
+            try {
+                probeContext.layer.remove();
+            } catch (_cleanupError) {}
+        }
+    }
+}
+
+function describeEffect(args) {
+    var probeContext = null;
+    var added = null;
+
+    try {
+        var options = args || {};
+        var effectName = options.effectName;
+        var effectMatchName = options.effectMatchName;
+        if (!effectName && !effectMatchName) {
+            throw new Error("You must specify either effectName or effectMatchName");
+        }
+
+        var comp = fxResolveComposition(options);
+        probeContext = fxResolveProbeLayer(comp, options);
+        var layer = probeContext.layer;
+        added = fxAddEffectWithFallback(layer, effectName, effectMatchName);
+        var effect = added.effect;
+        var properties = fxDescribeEffectProperties(effect);
+
+        return JSON.stringify({
+            status: "success",
+            composition: {
+                id: fxGetCompId(comp),
+                name: comp.name
+            },
+            layer: {
+                id: fxGetLayerId(layer),
+                name: layer.name,
+                index: layer.index,
+                temporary: probeContext.cleanup
+            },
+            effect: {
+                name: effect.name,
+                matchName: effect.matchName,
+                usedIdentifier: added.identifier,
+                propertyCount: properties.length,
+                properties: properties
+            }
+        }, null, 2);
+    } catch (error) {
+        return JSON.stringify({
+            status: "error",
+            message: error.toString()
+        }, null, 2);
+    } finally {
+        if (added && added.effect) {
+            try {
+                added.effect.remove();
+            } catch (_removeEffectErr) {}
+        }
+        if (probeContext && probeContext.cleanup && probeContext.layer) {
+            try {
+                probeContext.layer.remove();
+            } catch (_cleanupErr) {}
+        }
     }
 }
 
@@ -1188,6 +1535,7 @@ function getLayerInfo() {
     for (var i = 1; i <= activeComp.numLayers; i++) {
         var layer = activeComp.layer(i);
         var layerInfo = {
+            id: fxGetLayerId(layer),
             index: layer.index,
             name: layer.name,
             enabled: layer.enabled,
@@ -1267,6 +1615,16 @@ function executeCommand(command, args) {
                 logToPanel("Calling applyEffectTemplate function...");
                 result = applyEffectTemplate(args);
                 logToPanel("Returned from applyEffectTemplate.");
+                break;
+            case "listSupportedEffects":
+                logToPanel("Calling listSupportedEffects function...");
+                result = listSupportedEffects(args);
+                logToPanel("Returned from listSupportedEffects.");
+                break;
+            case "describeEffect":
+                logToPanel("Calling describeEffect function...");
+                result = describeEffect(args);
+                logToPanel("Returned from describeEffect.");
                 break;
             case "bridgeTestEffects":
                 logToPanel("Calling bridgeTestEffects function...");

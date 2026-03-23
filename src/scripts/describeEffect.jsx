@@ -1,30 +1,5 @@
-// applyEffect.jsx
-// Applies an effect to a specified layer in a composition
-
-function listOwnKeys(obj) {
-    var keys = [];
-    if (!obj) {
-        return keys;
-    }
-    for (var k in obj) {
-        if (obj.hasOwnProperty(k)) {
-            keys.push(k);
-        }
-    }
-    return keys;
-}
-
-function hasOwnEntries(obj) {
-    if (!obj) {
-        return false;
-    }
-    for (var k in obj) {
-        if (obj.hasOwnProperty(k)) {
-            return true;
-        }
-    }
-    return false;
-}
+// describeEffect.jsx
+// Adds an effect temporarily and returns its available parameter metadata.
 
 function parseNumericId(value) {
     if (value === undefined || value === null || value === "") {
@@ -156,6 +131,49 @@ function resolveLayer(comp, args) {
     throw new Error("No layer found in composition '" + comp.name + "'");
 }
 
+function hasExplicitLayerTarget(args) {
+    return args.layerId !== undefined ||
+        args.layerName !== undefined ||
+        args.layerIndex !== undefined;
+}
+
+function resolveProbeLayer(comp, args) {
+    if (hasExplicitLayerTarget(args)) {
+        return {
+            layer: resolveLayer(comp, args),
+            cleanup: false
+        };
+    }
+
+    if (comp.selectedLayers && comp.selectedLayers.length > 0) {
+        return {
+            layer: comp.selectedLayers[0],
+            cleanup: false
+        };
+    }
+
+    if (comp.numLayers > 0) {
+        return {
+            layer: comp.layer(1),
+            cleanup: false
+        };
+    }
+
+    var probeLayer = comp.layers.addSolid(
+        [0.5, 0.5, 0.5],
+        "__mcp_probe_layer__",
+        Math.max(1, comp.width),
+        Math.max(1, comp.height),
+        1,
+        Math.max(1, comp.duration)
+    );
+    probeLayer.enabled = false;
+    return {
+        layer: probeLayer,
+        cleanup: true
+    };
+}
+
 function pushUnique(targetArray, value) {
     if (!value || typeof value !== "string") {
         return;
@@ -214,63 +232,104 @@ function addEffectWithFallback(layer, effectName, effectMatchName) {
     );
 }
 
-function applyEffect(args) {
+function serializeValue(value) {
+    if (value === null || value === undefined) {
+        return value;
+    }
+    var t = typeof value;
+    if (t === "number" || t === "string" || t === "boolean") {
+        return value;
+    }
+    if (value instanceof Array) {
+        var arr = [];
+        for (var i = 0; i < value.length; i++) {
+            arr.push(serializeValue(value[i]));
+        }
+        return arr;
+    }
     try {
-        // Extract parameters
-        var effectName = args.effectName; // Name of the effect to apply
-        var effectMatchName = args.effectMatchName; // After Effects internal name (more reliable)
-        var presetPath = args.presetPath; // Optional path to an effect preset
-        var effectSettings = args.effectSettings || {}; // Optional effect parameters
+        return value.toString();
+    } catch (_e) {}
+    return null;
+}
 
-        if (!effectName && !effectMatchName && !presetPath) {
-            throw new Error("You must specify either effectName, effectMatchName, or presetPath");
+function describeEffectProperties(effect) {
+    var properties = [];
+
+    for (var i = 1; i <= effect.numProperties; i++) {
+        var prop = effect.property(i);
+        if (!prop) {
+            continue;
         }
 
-        var comp = resolveComposition(args);
-        var layer = resolveLayer(comp, args);
-        var effectResult;
+        var row = {
+            index: i,
+            name: prop.name || "",
+            matchName: prop.matchName || "",
+            propertyValueType: prop.propertyValueType,
+            canSetExpression: !!prop.canSetExpression
+        };
 
-        // Apply preset if a path is provided
-        if (presetPath) {
-            var presetFile = new File(presetPath);
-            if (!presetFile.exists) {
-                throw new Error("Effect preset file not found: " + presetPath);
+        try {
+            if (prop.hasMin) {
+                row.minValue = prop.minValue;
             }
+        } catch (_minErr) {}
 
-            // Apply the preset to the layer
-            layer.applyPreset(presetFile);
-            effectResult = {
-                type: "preset",
-                name: presetPath.split("/").pop().split("\\").pop(),
-                applied: true
-            };
-        } else {
-            // Apply effect by match name/display name with fallback identifiers
-            var added = addEffectWithFallback(layer, effectName, effectMatchName);
-            effectResult = {
-                type: "effect",
-                name: added.effect.name,
-                matchName: added.effect.matchName,
-                index: added.effect.propertyIndex,
-                usedIdentifier: added.identifier
-            };
+        try {
+            if (prop.hasMax) {
+                row.maxValue = prop.maxValue;
+            }
+        } catch (_maxErr) {}
 
-            // Apply settings if provided
-            applyEffectSettings(added.effect, effectSettings);
+        try {
+            row.currentValue = serializeValue(prop.value);
+        } catch (_valueErr) {}
+
+        properties.push(row);
+    }
+
+    return properties;
+}
+
+function describeEffect(args) {
+    var probeContext = null;
+    var added = null;
+
+    try {
+        var options = args || {};
+        var effectName = options.effectName;
+        var effectMatchName = options.effectMatchName;
+        if (!effectName && !effectMatchName) {
+            throw new Error("You must specify either effectName or effectMatchName");
         }
+
+        var comp = resolveComposition(options);
+        probeContext = resolveProbeLayer(comp, options);
+        var layer = probeContext.layer;
+
+        added = addEffectWithFallback(layer, effectName, effectMatchName);
+        var effect = added.effect;
+        var properties = describeEffectProperties(effect);
 
         return JSON.stringify({
             status: "success",
-            message: "Effect applied successfully",
-            effect: effectResult,
+            composition: {
+                id: getCompId(comp),
+                name: comp.name
+            },
             layer: {
+                id: getLayerId(layer),
                 name: layer.name,
                 index: layer.index,
-                id: getLayerId(layer)
+                temporary: probeContext.cleanup
             },
-            composition: {
-                name: comp.name,
-                id: comp.id
+            effect: {
+                name: effect.name,
+                matchName: effect.matchName,
+                usedIdentifier: added.identifier,
+                propertyCount: properties.length,
+                properties: properties
             }
         }, null, 2);
     } catch (error) {
@@ -278,46 +337,16 @@ function applyEffect(args) {
             status: "error",
             message: error.toString()
         }, null, 2);
-    }
-}
-
-// Helper function to apply effect settings
-function applyEffectSettings(effect, settings) {
-    // Skip if no settings are provided
-    if (!hasOwnEntries(settings)) {
-        return;
-    }
-
-    var settingKeys = listOwnKeys(settings);
-
-    // Iterate through all provided settings
-    for (var x = 0; x < settingKeys.length; x++) {
-        var propName = settingKeys[x];
-        try {
-            // Find the property in the effect
-            var property = null;
-
-            // Try direct property access first
+    } finally {
+        if (added && added.effect) {
             try {
-                property = effect.property(propName);
-            } catch (e) {
-                // If direct access fails, search through all properties
-                for (var i = 1; i <= effect.numProperties; i++) {
-                    var prop = effect.property(i);
-                    if (prop.name === propName) {
-                        property = prop;
-                        break;
-                    }
-                }
-            }
-
-            // Set the property value if found
-            if (property && property.setValue) {
-                property.setValue(settings[propName]);
-            }
-        } catch (e2) {
-            // Log error but continue with other properties
-            $.writeln("Error setting effect property '" + propName + "': " + e2.toString());
+                added.effect.remove();
+            } catch (_removeEffectErr) {}
+        }
+        if (probeContext && probeContext.cleanup && probeContext.layer) {
+            try {
+                probeContext.layer.remove();
+            } catch (_cleanupErr) {}
         }
     }
 }
@@ -339,7 +368,7 @@ if (argsFile.exists) {
 }
 
 // Run the function and write the result
-var result = applyEffect(args);
+var result = describeEffect(args);
 
 // Write the result so it can be captured by the Node.js process
 $.write(result);

@@ -1,11 +1,15 @@
 use anyhow::{anyhow, Context, Result};
 use bridge_core::BridgeClient;
-use mcp_core::{effects_help_text, general_help_text, prompt_messages, prompt_specs, tool_specs, AppConfig};
+use mcp_core::{
+    effects_help_text, general_help_text, prompt_messages, prompt_specs, tool_specs, AppConfig,
+};
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 use std::fs;
 use std::time::Duration;
-use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
+use tokio::io::{
+    AsyncBufRead, AsyncBufReadExt, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader,
+};
 use tracing::{debug, error, info};
 
 #[derive(Debug, Deserialize)]
@@ -197,7 +201,12 @@ fn dispatch_tool(cfg: &AppConfig, bridge: &BridgeClient, name: &str, args: Value
     }
 }
 
-fn dispatch_tool_inner(cfg: &AppConfig, bridge: &BridgeClient, name: &str, args: Value) -> Result<Value> {
+fn dispatch_tool_inner(
+    cfg: &AppConfig,
+    bridge: &BridgeClient,
+    name: &str,
+    args: Value,
+) -> Result<Value> {
     match name {
         "run-script" => {
             let script = args
@@ -276,13 +285,39 @@ fn dispatch_tool_inner(cfg: &AppConfig, bridge: &BridgeClient, name: &str, args:
                 "Command to apply effect template '{template_name}' to {layer_target} in {comp_target} has been queued.\nUse the \"get-results\" tool after a few seconds to check for confirmation."
             )))
         }
-        "mcp_aftereffects_applyEffect" => run_direct_bridge_call(
-            cfg,
-            bridge,
-            "applyEffect",
-            args,
-            "Error applying effect",
-        ),
+        "list-supported-effects" => {
+            bridge.write_command_file("listSupportedEffects", args)?;
+            Ok(tool_text(
+                "Command to list supported effects has been queued.\nUse the \"get-results\" tool after a few seconds to check for confirmation."
+                    .to_string(),
+            ))
+        }
+        "describe-effect" => {
+            let has_effect_name = args
+                .get("effectName")
+                .and_then(Value::as_str)
+                .map(|v| !v.trim().is_empty())
+                .unwrap_or(false);
+            let has_effect_match_name = args
+                .get("effectMatchName")
+                .and_then(Value::as_str)
+                .map(|v| !v.trim().is_empty())
+                .unwrap_or(false);
+            if !has_effect_name && !has_effect_match_name {
+                return Ok(tool_error(
+                    "Either 'effectName' or 'effectMatchName' is required.".to_string(),
+                ));
+            }
+
+            bridge.write_command_file("describeEffect", args)?;
+            Ok(tool_text(
+                "Command to describe effect has been queued.\nUse the \"get-results\" tool after a few seconds to check for confirmation."
+                    .to_string(),
+            ))
+        }
+        "mcp_aftereffects_applyEffect" => {
+            run_direct_bridge_call(cfg, bridge, "applyEffect", args, "Error applying effect")
+        }
         "mcp_aftereffects_applyEffectTemplate" => run_direct_bridge_call(
             cfg,
             bridge,
@@ -290,6 +325,37 @@ fn dispatch_tool_inner(cfg: &AppConfig, bridge: &BridgeClient, name: &str, args:
             args,
             "Error applying effect template",
         ),
+        "mcp_aftereffects_listSupportedEffects" => run_direct_bridge_call(
+            cfg,
+            bridge,
+            "listSupportedEffects",
+            args,
+            "Error listing supported effects",
+        ),
+        "mcp_aftereffects_describeEffect" => {
+            let has_effect_name = args
+                .get("effectName")
+                .and_then(Value::as_str)
+                .map(|v| !v.trim().is_empty())
+                .unwrap_or(false);
+            let has_effect_match_name = args
+                .get("effectMatchName")
+                .and_then(Value::as_str)
+                .map(|v| !v.trim().is_empty())
+                .unwrap_or(false);
+            if !has_effect_name && !has_effect_match_name {
+                return Ok(tool_error(
+                    "Either 'effectName' or 'effectMatchName' is required.".to_string(),
+                ));
+            }
+            run_direct_bridge_call(
+                cfg,
+                bridge,
+                "describeEffect",
+                args,
+                "Error describing effect",
+            )
+        }
         "mcp_aftereffects_get_effects_help" => Ok(tool_text(effects_help_text().to_string())),
         "run-bridge-test" => {
             bridge.clear_results_file()?;
@@ -304,7 +370,9 @@ fn dispatch_tool_inner(cfg: &AppConfig, bridge: &BridgeClient, name: &str, args:
 }
 
 fn format_comp_target(args: &Value) -> String {
-    if let Some(name) = args
+    if let Some(id) = args.get("compId").and_then(Value::as_i64) {
+        format!("composition id {id}")
+    } else if let Some(name) = args
         .get("compName")
         .and_then(Value::as_str)
         .filter(|name| !name.trim().is_empty())
@@ -318,7 +386,9 @@ fn format_comp_target(args: &Value) -> String {
 }
 
 fn format_layer_target(args: &Value) -> String {
-    if let Some(name) = args
+    if let Some(id) = args.get("layerId").and_then(Value::as_i64) {
+        format!("layer id {id}")
+    } else if let Some(name) = args
         .get("layerName")
         .and_then(Value::as_str)
         .filter(|name| !name.trim().is_empty())
@@ -493,7 +563,10 @@ where
         .write_all(&payload)
         .await
         .with_context(|| "failed to write response body")?;
-    writer.flush().await.with_context(|| "failed to flush response")
+    writer
+        .flush()
+        .await
+        .with_context(|| "failed to flush response")
 }
 
 fn success_response(id: Value, result: Value) -> Value {
@@ -522,7 +595,10 @@ mod tests {
     #[test]
     fn tools_list_contains_run_script() {
         let result = tools_list_result();
-        let tools = result.get("tools").and_then(Value::as_array).expect("tools array");
+        let tools = result
+            .get("tools")
+            .and_then(Value::as_array)
+            .expect("tools array");
         assert!(tools
             .iter()
             .any(|t| t.get("name").and_then(Value::as_str) == Some("run-script")));
