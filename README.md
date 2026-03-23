@@ -218,3 +218,4 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 - [Development stages](docs/development-stages.md)
 - [Codex MCP setup guide](docs/setup-codex-mcp.md)
 - [Installer E2E guide](docs/installer-e2e.md)
+- [Signing and RC guide](docs/signing-and-rc.md)
