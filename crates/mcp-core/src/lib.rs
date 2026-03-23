@@ -3,6 +3,23 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+pub const ALLOWED_SCRIPTS: &[&str] = &[
+    "listCompositions",
+    "getProjectInfo",
+    "getLayerInfo",
+    "createComposition",
+    "createTextLayer",
+    "createShapeLayer",
+    "createSolidLayer",
+    "setLayerProperties",
+    "setLayerKeyframe",
+    "setLayerExpression",
+    "applyEffect",
+    "applyEffectTemplate",
+    "test-animation",
+    "bridgeTestEffects",
+];
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct BridgePaths {
     pub root_dir: PathBuf,
@@ -59,6 +76,10 @@ pub fn default_bridge_root_dir() -> PathBuf {
     home.join("Documents").join("ae-mcp-bridge")
 }
 
+pub fn is_allowed_script(script: &str) -> bool {
+    ALLOWED_SCRIPTS.contains(&script)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -71,4 +92,3 @@ mod tests {
         assert_eq!(cfg.poll_interval_ms, 250);
     }
 }
-
