@@ -455,90 +455,214 @@ function setLayerExpression(compIndex, layerIndex, propertyName, expressionStrin
     }
 }
 
+// --- applyEffect/applyEffectTemplate helpers ---
+function fxListOwnKeys(obj) {
+    var keys = [];
+    if (!obj) {
+        return keys;
+    }
+    for (var k in obj) {
+        if (obj.hasOwnProperty(k)) {
+            keys.push(k);
+        }
+    }
+    return keys;
+}
+
+function fxHasOwnEntries(obj) {
+    if (!obj) {
+        return false;
+    }
+    for (var k in obj) {
+        if (obj.hasOwnProperty(k)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+function fxResolveComposition(args) {
+    var compName = args.compName || args.compositionName;
+    var compIndex = args.compIndex;
+    var i;
+
+    if (compName) {
+        for (i = 1; i <= app.project.numItems; i++) {
+            var byName = app.project.item(i);
+            if (byName instanceof CompItem && byName.name === compName) {
+                return byName;
+            }
+        }
+        throw new Error("Composition not found by name '" + compName + "'");
+    }
+
+    if (compIndex !== undefined && compIndex !== null) {
+        var parsedCompIndex = parseInt(compIndex, 10);
+        if (!isNaN(parsedCompIndex)) {
+            var byIndex = app.project.item(parsedCompIndex);
+            if (byIndex && byIndex instanceof CompItem) {
+                return byIndex;
+            }
+            throw new Error("Composition not found at index " + parsedCompIndex);
+        }
+    }
+
+    if (app.project.activeItem && app.project.activeItem instanceof CompItem) {
+        return app.project.activeItem;
+    }
+
+    for (i = 1; i <= app.project.numItems; i++) {
+        var firstComp = app.project.item(i);
+        if (firstComp instanceof CompItem) {
+            return firstComp;
+        }
+    }
+
+    throw new Error("No composition found in project");
+}
+
+function fxResolveLayer(comp, args) {
+    var layerName = args.layerName;
+    var layerIndex = args.layerIndex;
+    var j;
+
+    if (layerName) {
+        for (j = 1; j <= comp.numLayers; j++) {
+            if (comp.layer(j).name === layerName) {
+                return comp.layer(j);
+            }
+        }
+        throw new Error("Layer not found by name '" + layerName + "' in composition '" + comp.name + "'");
+    }
+
+    if (layerIndex !== undefined && layerIndex !== null) {
+        var parsedLayerIndex = parseInt(layerIndex, 10);
+        if (!isNaN(parsedLayerIndex) && parsedLayerIndex > 0 && parsedLayerIndex <= comp.numLayers) {
+            return comp.layer(parsedLayerIndex);
+        }
+        throw new Error("Layer index out of bounds: " + layerIndex + " in composition '" + comp.name + "'");
+    }
+
+    if (comp.selectedLayers && comp.selectedLayers.length > 0) {
+        return comp.selectedLayers[0];
+    }
+
+    if (comp.numLayers > 0) {
+        return comp.layer(1);
+    }
+
+    throw new Error("No layer found in composition '" + comp.name + "'");
+}
+
+function fxPushUnique(targetArray, value) {
+    if (!value || typeof value !== "string") {
+        return;
+    }
+    for (var i = 0; i < targetArray.length; i++) {
+        if (targetArray[i] === value) {
+            return;
+        }
+    }
+    targetArray.push(value);
+}
+
+function fxAddEffectWithFallback(layer, effectName, effectMatchName) {
+    var candidates = [];
+    var failures = [];
+
+    fxPushUnique(candidates, effectMatchName);
+    fxPushUnique(candidates, effectName);
+
+    var isRampRequest =
+        effectMatchName === "ADBE Ramp" ||
+        effectName === "ADBE Ramp" ||
+        effectName === "Ramp" ||
+        effectName === "Gradient Ramp";
+
+    if (isRampRequest) {
+        fxPushUnique(candidates, "ADBE Ramp");
+        fxPushUnique(candidates, "Ramp");
+        fxPushUnique(candidates, "ADBE 4ColorGradient");
+        fxPushUnique(candidates, "ADBE 4 Color Gradient");
+    }
+
+    if (candidates.length === 0) {
+        throw new Error("No valid effect identifier was provided");
+    }
+
+    for (var i = 0; i < candidates.length; i++) {
+        var candidate = candidates[i];
+        try {
+            var effect = layer.Effects.addProperty(candidate);
+            if (effect) {
+                return {
+                    effect: effect,
+                    identifier: candidate
+                };
+            }
+        } catch (e) {
+            failures.push(candidate + ": " + e.toString());
+        }
+    }
+
+    throw new Error(
+        "Failed to add effect. Tried identifiers: " +
+        candidates.join(", ") +
+        (failures.length ? " | details: " + failures.join(" ; ") : "")
+    );
+}
+
 // --- applyEffect (from applyEffect.jsx) ---
 function applyEffect(args) {
     try {
-        // Extract parameters
-        var compIndex = args.compIndex || 1; // Default to first comp
-        var layerIndex = args.layerIndex || 1; // Default to first layer
-        var effectName = args.effectName; // Name of the effect to apply
-        var effectMatchName = args.effectMatchName; // After Effects internal name (more reliable)
-        var effectCategory = args.effectCategory || ""; // Optional category for filtering
-        var presetPath = args.presetPath; // Optional path to an effect preset
-        var effectSettings = args.effectSettings || {}; // Optional effect parameters
-        
+        var effectName = args.effectName;
+        var effectMatchName = args.effectMatchName;
+        var presetPath = args.presetPath;
+        var effectSettings = args.effectSettings || {};
+
         if (!effectName && !effectMatchName && !presetPath) {
             throw new Error("You must specify either effectName, effectMatchName, or presetPath");
         }
-        
-        // Find the composition by index
-        var comp = app.project.item(compIndex);
-        if (!comp || !(comp instanceof CompItem)) {
-            throw new Error("Composition not found at index " + compIndex);
-        }
-        
-        // Find the layer by index
-        var layer = comp.layer(layerIndex);
-        if (!layer) {
-            throw new Error("Layer not found at index " + layerIndex + " in composition '" + comp.name + "'");
-        }
-        
+
+        var comp = fxResolveComposition(args);
+        var layer = fxResolveLayer(comp, args);
         var effectResult;
-        
-        // Apply preset if a path is provided
+
         if (presetPath) {
             var presetFile = new File(presetPath);
             if (!presetFile.exists) {
                 throw new Error("Effect preset file not found: " + presetPath);
             }
-            
-            // Apply the preset to the layer
+
             layer.applyPreset(presetFile);
             effectResult = {
                 type: "preset",
-                name: presetPath.split('/').pop().split('\\').pop(),
+                name: presetPath.split("/").pop().split("\\").pop(),
                 applied: true
             };
-        }
-        // Apply effect by match name (more reliable method)
-        else if (effectMatchName) {
-            var effect = layer.Effects.addProperty(effectMatchName);
+        } else {
+            var added = fxAddEffectWithFallback(layer, effectName, effectMatchName);
             effectResult = {
                 type: "effect",
-                name: effect.name,
-                matchName: effect.matchName,
-                index: effect.propertyIndex
+                name: added.effect.name,
+                matchName: added.effect.matchName,
+                index: added.effect.propertyIndex,
+                usedIdentifier: added.identifier
             };
-            
-            // Apply settings if provided
-            applyEffectSettings(effect, effectSettings);
+            applyEffectSettings(added.effect, effectSettings);
         }
-        // Apply effect by display name
-        else {
-            // Get the effect from the Effect menu
-            var effect = layer.Effects.addProperty(effectName);
-            effectResult = {
-                type: "effect",
-                name: effect.name,
-                matchName: effect.matchName,
-                index: effect.propertyIndex
-            };
-            
-            // Apply settings if provided
-            applyEffectSettings(effect, effectSettings);
-        }
-        
+
         return JSON.stringify({
             status: "success",
             message: "Effect applied successfully",
             effect: effectResult,
             layer: {
                 name: layer.name,
-                index: layerIndex
+                index: layer.index
             },
             composition: {
                 name: comp.name,
-                index: compIndex
+                id: comp.id
             }
         }, null, 2);
     } catch (error) {
@@ -551,129 +675,193 @@ function applyEffect(args) {
 
 // Helper function to apply effect settings
 function applyEffectSettings(effect, settings) {
-    // Skip if no settings are provided
-    if (!settings || Object.keys(settings).length === 0) {
+    if (!fxHasOwnEntries(settings)) {
         return;
     }
-    
-    // Iterate through all provided settings
-    for (var propName in settings) {
-        if (settings.hasOwnProperty(propName)) {
+
+    var settingKeys = fxListOwnKeys(settings);
+    for (var x = 0; x < settingKeys.length; x++) {
+        var propName = settingKeys[x];
+        try {
+            var property = null;
             try {
-                // Find the property in the effect
-                var property = null;
-                
-                // Try direct property access first
-                try {
-                    property = effect.property(propName);
-                } catch (e) {
-                    // If direct access fails, search through all properties
-                    for (var i = 1; i <= effect.numProperties; i++) {
-                        var prop = effect.property(i);
-                        if (prop.name === propName) {
-                            property = prop;
-                            break;
-                        }
+                property = effect.property(propName);
+            } catch (e) {
+                for (var i = 1; i <= effect.numProperties; i++) {
+                    var prop = effect.property(i);
+                    if (prop.name === propName) {
+                        property = prop;
+                        break;
                     }
                 }
-                
-                // Set the property value if found
-                if (property && property.setValue) {
-                    property.setValue(settings[propName]);
-                }
-            } catch (e) {
-                // Log error but continue with other properties
-                $.writeln("Error setting effect property '" + propName + "': " + e.toString());
             }
+            if (property && property.setValue) {
+                property.setValue(settings[propName]);
+            }
+        } catch (e2) {
+            $.writeln("Error setting effect property '" + propName + "': " + e2.toString());
         }
     }
+}
+
+function fxApplyTemplateSettings(effect, settings) {
+    if (!settings) {
+        return;
+    }
+    var keys = fxListOwnKeys(settings);
+    for (var i = 0; i < keys.length; i++) {
+        var propName = keys[i];
+        try {
+            var property = effect.property(propName);
+            if (property) {
+                property.setValue(settings[propName]);
+            }
+        } catch (e) {
+            $.writeln("Warning: Could not set " + propName + " on effect " + effect.name + ": " + e);
+        }
+    }
+}
+
+function fxAddTemplateEffectWithFallback(layer, primaryMatchName, fallbackMatchNames) {
+    var candidates = [];
+    var failures = [];
+    fxPushUnique(candidates, primaryMatchName);
+
+    if (fallbackMatchNames && fallbackMatchNames.length) {
+        for (var i = 0; i < fallbackMatchNames.length; i++) {
+            fxPushUnique(candidates, fallbackMatchNames[i]);
+        }
+    }
+
+    for (var x = 0; x < candidates.length; x++) {
+        var candidate = candidates[x];
+        try {
+            var effect = layer.Effects.addProperty(candidate);
+            if (effect) {
+                return {
+                    effect: effect,
+                    identifier: candidate
+                };
+            }
+        } catch (e) {
+            failures.push(candidate + ": " + e.toString());
+        }
+    }
+
+    throw new Error(
+        "Failed to add template effect. Tried identifiers: " +
+        candidates.join(", ") +
+        (failures.length ? " | details: " + failures.join(" ; ") : "")
+    );
 }
 
 // --- applyEffectTemplate (from applyEffectTemplate.jsx) ---
 function applyEffectTemplate(args) {
     try {
-        // Extract parameters
-        var compIndex = args.compIndex || 1; // Default to first comp
-        var layerIndex = args.layerIndex || 1; // Default to first layer
-        var templateName = args.templateName; // Name of the template to apply
-        var customSettings = args.customSettings || {}; // Optional customizations
-        
+        var templateName = args.templateName;
+        var customSettings = args.customSettings || {};
+
         if (!templateName) {
             throw new Error("You must specify a templateName");
         }
-        
-        // Find the composition by index
-        var comp = app.project.item(compIndex);
-        if (!comp || !(comp instanceof CompItem)) {
-            throw new Error("Composition not found at index " + compIndex);
-        }
-        
-        // Find the layer by index
-        var layer = comp.layer(layerIndex);
-        if (!layer) {
-            throw new Error("Layer not found at index " + layerIndex + " in composition '" + comp.name + "'");
-        }
-        
-        // Template definitions
+
+        var comp = fxResolveComposition(args);
+        var layer = fxResolveLayer(comp, args);
+
         var templates = {
-            // Blur effects
             "gaussian-blur": {
-                effectMatchName: "ADBE Gaussian Blur 2",
-                settings: {
-                    "Blurriness": customSettings.blurriness || 20
-                }
+                effects: [
+                    {
+                        effectMatchName: "ADBE Gaussian Blur 2",
+                        settings: { "Blurriness": customSettings.blurriness || 20 }
+                    }
+                ]
             },
             "directional-blur": {
-                effectMatchName: "ADBE Directional Blur",
-                settings: {
-                    "Direction": customSettings.direction || 0,
-                    "Blur Length": customSettings.length || 10
-                }
+                effects: [
+                    {
+                        effectMatchName: "ADBE Directional Blur",
+                        settings: {
+                            "Direction": customSettings.direction || 0,
+                            "Blur Length": customSettings.length || 10
+                        }
+                    }
+                ]
             },
-            
-            // Color correction effects
             "color-balance": {
-                effectMatchName: "ADBE Color Balance (HLS)",
-                settings: {
-                    "Hue": customSettings.hue || 0,
-                    "Lightness": customSettings.lightness || 0,
-                    "Saturation": customSettings.saturation || 0
-                }
+                effects: [
+                    {
+                        effectMatchName: "ADBE Color Balance (HLS)",
+                        settings: {
+                            "Hue": customSettings.hue || 0,
+                            "Lightness": customSettings.lightness || 0,
+                            "Saturation": customSettings.saturation || 0
+                        }
+                    }
+                ]
             },
             "brightness-contrast": {
-                effectMatchName: "ADBE Brightness & Contrast 2",
-                settings: {
-                    "Brightness": customSettings.brightness || 0,
-                    "Contrast": customSettings.contrast || 0,
-                    "Use Legacy": false
-                }
+                effects: [
+                    {
+                        effectMatchName: "ADBE Brightness & Contrast 2",
+                        settings: {
+                            "Brightness": customSettings.brightness || 0,
+                            "Contrast": customSettings.contrast || 0,
+                            "Use Legacy": false
+                        }
+                    }
+                ]
             },
             "curves": {
-                effectMatchName: "ADBE CurvesCustom",
-                // Curves are complex and would need special handling
+                effects: [
+                    {
+                        effectMatchName: "ADBE CurvesCustom",
+                        settings: {}
+                    }
+                ]
             },
-            
-            // Stylistic effects
             "glow": {
-                effectMatchName: "ADBE Glow",
-                settings: {
-                    "Glow Threshold": customSettings.threshold || 50,
-                    "Glow Radius": customSettings.radius || 15,
-                    "Glow Intensity": customSettings.intensity || 1
-                }
+                effects: [
+                    {
+                        effectMatchName: "ADBE Glow",
+                        settings: {
+                            "Glow Threshold": customSettings.threshold || 50,
+                            "Glow Radius": customSettings.radius || 15,
+                            "Glow Intensity": customSettings.intensity || 1
+                        }
+                    }
+                ]
             },
             "drop-shadow": {
-                effectMatchName: "ADBE Drop Shadow",
-                settings: {
-                    "Shadow Color": customSettings.color || [0, 0, 0, 1],
-                    "Opacity": customSettings.opacity || 50,
-                    "Direction": customSettings.direction || 135,
-                    "Distance": customSettings.distance || 10,
-                    "Softness": customSettings.softness || 10
-                }
+                effects: [
+                    {
+                        effectMatchName: "ADBE Drop Shadow",
+                        settings: {
+                            "Shadow Color": customSettings.color || [0, 0, 0, 1],
+                            "Opacity": customSettings.opacity || 50,
+                            "Direction": customSettings.direction || 135,
+                            "Distance": customSettings.distance || 10,
+                            "Softness": customSettings.softness || 10
+                        }
+                    }
+                ]
             },
-            
-            // Common effect chains
+            "smooth-gradient": {
+                effects: [
+                    {
+                        effectMatchName: "ADBE Ramp",
+                        fallbackMatchNames: ["Ramp", "ADBE 4ColorGradient", "ADBE 4 Color Gradient"],
+                        settings: {
+                            "Start Color": customSettings.startColor || [0.02, 0.08, 0.2],
+                            "End Color": customSettings.endColor || [0.75, 0.85, 1.0],
+                            "Start of Ramp": customSettings.startPoint || [0, 0],
+                            "End of Ramp": customSettings.endPoint || [1920, 1080],
+                            "Ramp Scatter": customSettings.scatter || 0,
+                            "Blend With Original": customSettings.blend || 0
+                        }
+                    }
+                ]
+            },
             "cinematic-look": {
                 effects: [
                     {
@@ -711,73 +899,37 @@ function applyEffectTemplate(args) {
                 ]
             }
         };
-        
-        // Check if the requested template exists
+
         var template = templates[templateName];
         if (!template) {
-            var availableTemplates = Object.keys(templates).join(", ");
+            var availableTemplates = fxListOwnKeys(templates).join(", ");
             throw new Error("Template '" + templateName + "' not found. Available templates: " + availableTemplates);
         }
-        
+
         var appliedEffects = [];
-        
-        // Apply single effect or multiple effects based on template structure
-        if (template.effectMatchName) {
-            // Single effect template
-            var effect = layer.Effects.addProperty(template.effectMatchName);
-            
-            // Apply settings
-            for (var propName in template.settings) {
-                try {
-                    var property = effect.property(propName);
-                    if (property) {
-                        property.setValue(template.settings[propName]);
-                    }
-                } catch (e) {
-                    $.writeln("Warning: Could not set " + propName + " on effect " + effect.name + ": " + e);
-                }
-            }
-            
+        var effects = template.effects || [];
+        for (var i = 0; i < effects.length; i++) {
+            var effectData = effects[i];
+            var added = fxAddTemplateEffectWithFallback(layer, effectData.effectMatchName, effectData.fallbackMatchNames || []);
+            fxApplyTemplateSettings(added.effect, effectData.settings || {});
             appliedEffects.push({
-                name: effect.name,
-                matchName: effect.matchName
+                name: added.effect.name,
+                matchName: added.effect.matchName,
+                usedIdentifier: added.identifier
             });
-        } else if (template.effects) {
-            // Multiple effects template
-            for (var i = 0; i < template.effects.length; i++) {
-                var effectData = template.effects[i];
-                var effect = layer.Effects.addProperty(effectData.effectMatchName);
-                
-                // Apply settings
-                for (var propName in effectData.settings) {
-                    try {
-                        var property = effect.property(propName);
-                        if (property) {
-                            property.setValue(effectData.settings[propName]);
-                        }
-                    } catch (e) {
-                        $.writeln("Warning: Could not set " + propName + " on effect " + effect.name + ": " + e);
-                    }
-                }
-                
-                appliedEffects.push({
-                    name: effect.name,
-                    matchName: effect.matchName
-                });
-            }
         }
-        
+
         return JSON.stringify({
             status: "success",
             message: "Effect template '" + templateName + "' applied successfully",
             appliedEffects: appliedEffects,
             layer: {
                 name: layer.name,
-                index: layerIndex
+                index: layer.index
             },
             composition: {
                 name: comp.name,
-                index: compIndex
+                id: comp.id
             }
         }, null, 2);
     } catch (error) {

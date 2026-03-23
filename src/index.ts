@@ -160,10 +160,10 @@ server.resource(
   }
 );
 
-// Add a tool for running read-only scripts
+// Add a tool for running predefined scripts
 server.tool(
   "run-script",
-  "Run a read-only script in After Effects",
+  "Run a predefined script in After Effects (read/write depending on script)",
   {
     script: z.string().describe("Name of the predefined script to run"),
     parameters: z.record(z.any()).optional().describe("Optional parameters for the script")
@@ -369,6 +369,7 @@ Effect Templates:
 - curves: Advanced color adjustment using curves
 - glow: Add a glow effect to elements
 - drop-shadow: Add a customizable drop shadow
+- smooth-gradient: Prefer Gradient Ramp and fall back for compatibility
 - cinematic-look: Combination of effects for a cinematic appearance
 - text-pop: Effects to make text stand out (glow and shadow)
 
@@ -635,8 +636,10 @@ server.tool(
   "apply-effect",
   "Apply an effect to a layer in After Effects",
   {
-    compIndex: z.number().int().positive().describe("1-based index of the target composition in the project panel."),
-    layerIndex: z.number().int().positive().describe("1-based index of the target layer within the composition."),
+    compIndex: z.number().int().positive().optional().describe("1-based index of the target composition in the project panel."),
+    compName: z.string().optional().describe("Optional composition name. Preferred over index when provided."),
+    layerIndex: z.number().int().positive().optional().describe("1-based index of the target layer within the composition."),
+    layerName: z.string().optional().describe("Optional layer name. Preferred over index when provided."),
     effectName: z.string().optional().describe("Display name of the effect to apply (e.g., 'Gaussian Blur')."),
     effectMatchName: z.string().optional().describe("After Effects internal name for the effect (more reliable, e.g., 'ADBE Gaussian Blur 2')."),
     effectCategory: z.string().optional().describe("Optional category for filtering effects."),
@@ -652,7 +655,7 @@ server.tool(
         content: [
           {
             type: "text",
-            text: `Command to apply effect to layer ${parameters.layerIndex} in composition ${parameters.compIndex} has been queued.\n` +
+            text: `Command to apply effect has been queued.\n` +
                   `Use the "get-results" tool after a few seconds to check for confirmation.`
           }
         ]
@@ -676,8 +679,10 @@ server.tool(
   "apply-effect-template",
   "Apply a predefined effect template to a layer in After Effects",
   {
-    compIndex: z.number().int().positive().describe("1-based index of the target composition in the project panel."),
-    layerIndex: z.number().int().positive().describe("1-based index of the target layer within the composition."),
+    compIndex: z.number().int().positive().optional().describe("1-based index of the target composition in the project panel."),
+    compName: z.string().optional().describe("Optional composition name. Preferred over index when provided."),
+    layerIndex: z.number().int().positive().optional().describe("1-based index of the target layer within the composition."),
+    layerName: z.string().optional().describe("Optional layer name. Preferred over index when provided."),
     templateName: z.enum([
       "gaussian-blur", 
       "directional-blur", 
@@ -686,6 +691,7 @@ server.tool(
       "curves",
       "glow",
       "drop-shadow",
+      "smooth-gradient",
       "cinematic-look",
       "text-pop"
     ]).describe("Name of the effect template to apply."),
@@ -700,7 +706,7 @@ server.tool(
         content: [
           {
             type: "text",
-            text: `Command to apply effect template '${parameters.templateName}' to layer ${parameters.layerIndex} in composition ${parameters.compIndex} has been queued.\n` +
+            text: `Command to apply effect template '${parameters.templateName}' has been queued.\n` +
                   `Use the "get-results" tool after a few seconds to check for confirmation.`
           }
         ]
@@ -726,8 +732,10 @@ server.tool(
   "mcp_aftereffects_applyEffect",
   "Apply an effect to a layer in After Effects",
   {
-    compIndex: z.number().int().positive().describe("1-based index of the target composition in the project panel."),
-    layerIndex: z.number().int().positive().describe("1-based index of the target layer within the composition."),
+    compIndex: z.number().int().positive().optional().describe("1-based index of the target composition in the project panel."),
+    compName: z.string().optional().describe("Optional composition name. Preferred over index when provided."),
+    layerIndex: z.number().int().positive().optional().describe("1-based index of the target layer within the composition."),
+    layerName: z.string().optional().describe("Optional layer name. Preferred over index when provided."),
     effectName: z.string().optional().describe("Display name of the effect to apply (e.g., 'Gaussian Blur')."),
     effectMatchName: z.string().optional().describe("After Effects internal name for the effect (more reliable, e.g., 'ADBE Gaussian Blur 2')."),
     effectSettings: z.record(z.any()).optional().describe("Optional parameters for the effect (e.g., { 'Blurriness': 25 }).")
@@ -770,8 +778,10 @@ server.tool(
   "mcp_aftereffects_applyEffectTemplate",
   "Apply a predefined effect template to a layer in After Effects",
   {
-    compIndex: z.number().int().positive().describe("1-based index of the target composition in the project panel."),
-    layerIndex: z.number().int().positive().describe("1-based index of the target layer within the composition."),
+    compIndex: z.number().int().positive().optional().describe("1-based index of the target composition in the project panel."),
+    compName: z.string().optional().describe("Optional composition name. Preferred over index when provided."),
+    layerIndex: z.number().int().positive().optional().describe("1-based index of the target layer within the composition."),
+    layerName: z.string().optional().describe("Optional layer name. Preferred over index when provided."),
     templateName: z.enum([
       "gaussian-blur", 
       "directional-blur", 
@@ -780,6 +790,7 @@ server.tool(
       "curves",
       "glow",
       "drop-shadow",
+      "smooth-gradient",
       "cinematic-look",
       "text-pop"
     ]).describe("Name of the effect template to apply."),
@@ -870,6 +881,7 @@ The following predefined effect templates are available:
 - \`curves\`: Advanced color adjustment using curves
 - \`glow\`: Add a glow effect to elements
 - \`drop-shadow\`: Add a customizable drop shadow
+- \`smooth-gradient\`: Prefer Gradient Ramp and fall back for compatibility
 - \`cinematic-look\`: Combination of effects for a cinematic appearance
 - \`text-pop\`: Effects to make text stand out (glow and shadow)
 

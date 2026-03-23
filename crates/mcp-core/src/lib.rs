@@ -106,7 +106,7 @@ pub fn tool_specs() -> Vec<ToolSpec> {
     vec![
         ToolSpec {
             name: "run-script",
-            description: "Run a read-only script in After Effects",
+            description: "Run a predefined script in After Effects (read/write depending on script)",
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -205,14 +205,15 @@ pub fn tool_specs() -> Vec<ToolSpec> {
                 "type": "object",
                 "properties": {
                     "compIndex": { "type": "integer", "minimum": 1 },
+                    "compName": { "type": "string" },
                     "layerIndex": { "type": "integer", "minimum": 1 },
+                    "layerName": { "type": "string" },
                     "effectName": { "type": "string" },
                     "effectMatchName": { "type": "string" },
                     "effectCategory": { "type": "string" },
                     "presetPath": { "type": "string" },
                     "effectSettings": { "type": "object" }
-                },
-                "required": ["compIndex", "layerIndex"]
+                }
             }),
         },
         ToolSpec {
@@ -222,7 +223,9 @@ pub fn tool_specs() -> Vec<ToolSpec> {
                 "type": "object",
                 "properties": {
                     "compIndex": { "type": "integer", "minimum": 1 },
+                    "compName": { "type": "string" },
                     "layerIndex": { "type": "integer", "minimum": 1 },
+                    "layerName": { "type": "string" },
                     "templateName": {
                         "type": "string",
                         "enum": [
@@ -233,13 +236,14 @@ pub fn tool_specs() -> Vec<ToolSpec> {
                             "curves",
                             "glow",
                             "drop-shadow",
+                            "smooth-gradient",
                             "cinematic-look",
                             "text-pop"
                         ]
                     },
                     "customSettings": { "type": "object" }
                 },
-                "required": ["compIndex", "layerIndex", "templateName"]
+                "required": ["templateName"]
             }),
         },
         ToolSpec {
@@ -249,12 +253,13 @@ pub fn tool_specs() -> Vec<ToolSpec> {
                 "type": "object",
                 "properties": {
                     "compIndex": { "type": "integer", "minimum": 1 },
+                    "compName": { "type": "string" },
                     "layerIndex": { "type": "integer", "minimum": 1 },
+                    "layerName": { "type": "string" },
                     "effectName": { "type": "string" },
                     "effectMatchName": { "type": "string" },
                     "effectSettings": { "type": "object" }
-                },
-                "required": ["compIndex", "layerIndex"]
+                }
             }),
         },
         ToolSpec {
@@ -264,7 +269,9 @@ pub fn tool_specs() -> Vec<ToolSpec> {
                 "type": "object",
                 "properties": {
                     "compIndex": { "type": "integer", "minimum": 1 },
+                    "compName": { "type": "string" },
                     "layerIndex": { "type": "integer", "minimum": 1 },
+                    "layerName": { "type": "string" },
                     "templateName": {
                         "type": "string",
                         "enum": [
@@ -275,13 +282,14 @@ pub fn tool_specs() -> Vec<ToolSpec> {
                             "curves",
                             "glow",
                             "drop-shadow",
+                            "smooth-gradient",
                             "cinematic-look",
                             "text-pop"
                         ]
                     },
                     "customSettings": { "type": "object" }
                 },
-                "required": ["compIndex", "layerIndex", "templateName"]
+                "required": ["templateName"]
             }),
         },
         ToolSpec {
@@ -408,6 +416,7 @@ Templates:
 - curves
 - glow
 - drop-shadow
+- smooth-gradient
 - cinematic-look
 - text-pop
 "#

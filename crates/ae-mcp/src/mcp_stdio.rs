@@ -256,16 +256,16 @@ fn dispatch_tool_inner(cfg: &AppConfig, bridge: &BridgeClient, name: &str, args:
         }
         "test-animation" => create_test_animation_script(args),
         "apply-effect" => {
-            let comp_index = args.get("compIndex").and_then(Value::as_i64).unwrap_or(0);
-            let layer_index = args.get("layerIndex").and_then(Value::as_i64).unwrap_or(0);
+            let comp_target = format_comp_target(&args);
+            let layer_target = format_layer_target(&args);
             bridge.write_command_file("applyEffect", args)?;
             Ok(tool_text(format!(
-                "Command to apply effect to layer {layer_index} in composition {comp_index} has been queued.\nUse the \"get-results\" tool after a few seconds to check for confirmation."
+                "Command to apply effect to {layer_target} in {comp_target} has been queued.\nUse the \"get-results\" tool after a few seconds to check for confirmation."
             )))
         }
         "apply-effect-template" => {
-            let comp_index = args.get("compIndex").and_then(Value::as_i64).unwrap_or(0);
-            let layer_index = args.get("layerIndex").and_then(Value::as_i64).unwrap_or(0);
+            let comp_target = format_comp_target(&args);
+            let layer_target = format_layer_target(&args);
             let template_name = args
                 .get("templateName")
                 .and_then(Value::as_str)
@@ -273,7 +273,7 @@ fn dispatch_tool_inner(cfg: &AppConfig, bridge: &BridgeClient, name: &str, args:
                 .to_string();
             bridge.write_command_file("applyEffectTemplate", args)?;
             Ok(tool_text(format!(
-                "Command to apply effect template '{template_name}' to layer {layer_index} in composition {comp_index} has been queued.\nUse the \"get-results\" tool after a few seconds to check for confirmation."
+                "Command to apply effect template '{template_name}' to {layer_target} in {comp_target} has been queued.\nUse the \"get-results\" tool after a few seconds to check for confirmation."
             )))
         }
         "mcp_aftereffects_applyEffect" => run_direct_bridge_call(
@@ -300,6 +300,34 @@ fn dispatch_tool_inner(cfg: &AppConfig, bridge: &BridgeClient, name: &str, args:
             ))
         }
         _ => Ok(tool_error(format!("Unknown tool: {name}"))),
+    }
+}
+
+fn format_comp_target(args: &Value) -> String {
+    if let Some(name) = args
+        .get("compName")
+        .and_then(Value::as_str)
+        .filter(|name| !name.trim().is_empty())
+    {
+        format!("composition '{name}'")
+    } else if let Some(index) = args.get("compIndex").and_then(Value::as_i64) {
+        format!("composition {index}")
+    } else {
+        "resolved composition".to_string()
+    }
+}
+
+fn format_layer_target(args: &Value) -> String {
+    if let Some(name) = args
+        .get("layerName")
+        .and_then(Value::as_str)
+        .filter(|name| !name.trim().is_empty())
+    {
+        format!("layer '{name}'")
+    } else if let Some(index) = args.get("layerIndex").and_then(Value::as_i64) {
+        format!("layer {index}")
+    } else {
+        "resolved layer".to_string()
     }
 }
 
