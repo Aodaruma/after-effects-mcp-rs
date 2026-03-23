@@ -9,6 +9,10 @@ on:
 jobs:
   windows-rc:
     runs-on: windows-latest
+    env:
+      WIN_SIGN_PFX_BASE64: ${{ secrets.WIN_SIGN_PFX_BASE64 }}
+      WIN_SIGN_PFX_PASSWORD: ${{ secrets.WIN_SIGN_PFX_PASSWORD }}
+      WIN_SIGN_TIMESTAMP_URL: ${{ secrets.WIN_SIGN_TIMESTAMP_URL }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -33,26 +37,23 @@ jobs:
           .\scripts\package-windows.ps1 -OutputDir .\dist\windows -RequireMsi
 
       - name: Decode signing certificate
-        if: ${{ secrets.WIN_SIGN_PFX_BASE64 != '' }}
+        if: ${{ env.WIN_SIGN_PFX_BASE64 != '' }}
         shell: pwsh
         run: |
-          $bytes = [Convert]::FromBase64String("${{ secrets.WIN_SIGN_PFX_BASE64 }}")
+          $bytes = [Convert]::FromBase64String("$env:WIN_SIGN_PFX_BASE64")
           $path = Join-Path $env:RUNNER_TEMP "codesign.pfx"
           [IO.File]::WriteAllBytes($path, $bytes)
           "WIN_SIGN_PFX_PATH=$path" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Sign Windows artifacts
-        if: ${{ secrets.WIN_SIGN_PFX_BASE64 != '' && secrets.WIN_SIGN_PFX_PASSWORD != '' }}
+        if: ${{ env.WIN_SIGN_PFX_BASE64 != '' && env.WIN_SIGN_PFX_PASSWORD != '' }}
         shell: pwsh
-        env:
-          WIN_SIGN_PFX_PASSWORD: ${{ secrets.WIN_SIGN_PFX_PASSWORD }}
-          WIN_SIGN_TIMESTAMP_URL: ${{ secrets.WIN_SIGN_TIMESTAMP_URL }}
         run: |
           $timestamp = if ($env:WIN_SIGN_TIMESTAMP_URL) { $env:WIN_SIGN_TIMESTAMP_URL } else { "http://timestamp.digicert.com" }
           .\scripts\sign-windows.ps1 -ArtifactDir .\dist\windows -PfxPath $env:WIN_SIGN_PFX_PATH -PfxPassword $env:WIN_SIGN_PFX_PASSWORD -TimestampUrl $timestamp
 
       - name: Warn when Windows signing is skipped
-        if: ${{ secrets.WIN_SIGN_PFX_BASE64 == '' || secrets.WIN_SIGN_PFX_PASSWORD == '' }}
+        if: ${{ env.WIN_SIGN_PFX_BASE64 == '' || env.WIN_SIGN_PFX_PASSWORD == '' }}
         shell: pwsh
         run: |
           Write-Warning "Windows signing skipped. Set WIN_SIGN_PFX_BASE64 and WIN_SIGN_PFX_PASSWORD secrets."
@@ -65,6 +66,14 @@ jobs:
 
   macos-rc:
     runs-on: macos-14
+    env:
+      MAC_CERT_P12_BASE64: ${{ secrets.MAC_CERT_P12_BASE64 }}
+      MAC_CERT_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
+      MAC_KEYCHAIN_PASSWORD: ${{ secrets.MAC_KEYCHAIN_PASSWORD }}
+      MAC_CODESIGN_IDENTITY: ${{ secrets.MAC_CODESIGN_IDENTITY }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -78,11 +87,7 @@ jobs:
           REQUIRE_PKG=true ./scripts/package-macos.sh ./dist/macos
 
       - name: Import Apple certificate
-        if: ${{ secrets.MAC_CERT_P12_BASE64 != '' && secrets.MAC_CERT_PASSWORD != '' }}
-        env:
-          MAC_CERT_P12_BASE64: ${{ secrets.MAC_CERT_P12_BASE64 }}
-          MAC_CERT_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
-          MAC_KEYCHAIN_PASSWORD: ${{ secrets.MAC_KEYCHAIN_PASSWORD }}
+        if: ${{ env.MAC_CERT_P12_BASE64 != '' && env.MAC_CERT_PASSWORD != '' }}
         run: |
           KEYCHAIN_PASS="${MAC_KEYCHAIN_PASSWORD:-temp-pass}"
           CERT_PATH="$RUNNER_TEMP/macos-cert.p12"
@@ -96,17 +101,12 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASS" "$KEYCHAIN_PATH"
 
       - name: Notarize macOS artifacts
-        if: ${{ secrets.MAC_CODESIGN_IDENTITY != '' && secrets.APPLE_ID != '' && secrets.APPLE_TEAM_ID != '' && secrets.APPLE_APP_SPECIFIC_PASSWORD != '' }}
-        env:
-          MAC_CODESIGN_IDENTITY: ${{ secrets.MAC_CODESIGN_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+        if: ${{ env.MAC_CODESIGN_IDENTITY != '' && env.APPLE_ID != '' && env.APPLE_TEAM_ID != '' && env.APPLE_APP_SPECIFIC_PASSWORD != '' }}
         run: |
           ./scripts/notarize-macos.sh ./dist/macos
 
       - name: Warn when macOS notarization is skipped
-        if: ${{ secrets.MAC_CODESIGN_IDENTITY == '' || secrets.APPLE_ID == '' || secrets.APPLE_TEAM_ID == '' || secrets.APPLE_APP_SPECIFIC_PASSWORD == '' }}
+        if: ${{ env.MAC_CODESIGN_IDENTITY == '' || env.APPLE_ID == '' || env.APPLE_TEAM_ID == '' || env.APPLE_APP_SPECIFIC_PASSWORD == '' }}
         run: |
           echo "::warning::macOS notarization skipped. Set MAC_CODESIGN_IDENTITY, APPLE_ID, APPLE_TEAM_ID, APPLE_APP_SPECIFIC_PASSWORD."
 
@@ -115,4 +115,3 @@ jobs:
         with:
           name: macos-rc-artifacts
           path: dist/macos/*
-
