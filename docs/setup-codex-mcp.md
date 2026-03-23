@@ -35,11 +35,15 @@ Windows（PowerShell）:
 powershell -ExecutionPolicy Bypass -File .\scripts\install-bridge.ps1
 ```
 
+`-AfterEffectsPath` 未指定時は、検出した `Adobe After Effects <YEAR>` すべてにインストールされます。
+
 macOS（bash）:
 
 ```bash
 bash ./scripts/install-bridge.sh
 ```
+
+`--ae-path` 未指定時は、検出した `/Applications/Adobe After Effects <YEAR>` すべてにインストールされます。
 
 インストール先を手動指定する場合:
 

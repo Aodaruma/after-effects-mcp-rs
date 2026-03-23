@@ -70,17 +70,13 @@ function Resolve-PreferredPathInput {
     return $candidate
 }
 
-function Resolve-AfterEffectsPath {
-    param([string]$PreferredPath)
-
-    if ($PreferredPath) {
-        if (Test-Path -LiteralPath $PreferredPath) {
-            return $PreferredPath
-        }
-        throw "Specified After Effects path not found: $PreferredPath"
-    }
-
+function Get-DetectedAfterEffectsPaths {
+    $detected = @()
     $possiblePaths = @(
+        "C:\Program Files\Adobe\Adobe After Effects 2030",
+        "C:\Program Files\Adobe\Adobe After Effects 2029",
+        "C:\Program Files\Adobe\Adobe After Effects 2028",
+        "C:\Program Files\Adobe\Adobe After Effects 2027",
         "C:\Program Files\Adobe\Adobe After Effects 2026",
         "C:\Program Files\Adobe\Adobe After Effects 2025",
         "C:\Program Files\Adobe\Adobe After Effects 2024",
@@ -91,11 +87,43 @@ function Resolve-AfterEffectsPath {
 
     foreach ($path in $possiblePaths) {
         if (Test-Path -LiteralPath $path) {
-            return $path
+            $detected += $path
         }
     }
 
-    throw "After Effects install path was not detected. Pass -AfterEffectsPath explicitly."
+    $adobeRoot = "C:\Program Files\Adobe"
+    if (Test-Path -LiteralPath $adobeRoot) {
+        $dynamicPaths = Get-ChildItem -LiteralPath $adobeRoot -Directory |
+            Where-Object { $_.Name -match '^Adobe After Effects (\d{4})$' } |
+            Sort-Object { [int]($_.Name -replace '^Adobe After Effects ', '') } -Descending |
+            ForEach-Object { $_.FullName }
+
+        foreach ($path in $dynamicPaths) {
+            if ($detected -notcontains $path) {
+                $detected += $path
+            }
+        }
+    }
+
+    return $detected
+}
+
+function Resolve-InstallTargets {
+    param([string]$PreferredPath)
+
+    if ($PreferredPath) {
+        if (Test-Path -LiteralPath $PreferredPath) {
+            return @((Resolve-Path -LiteralPath $PreferredPath).Path)
+        }
+        throw "Specified After Effects path not found: $PreferredPath"
+    }
+
+    $detected = Get-DetectedAfterEffectsPaths
+    if (-not $detected -or $detected.Count -eq 0) {
+        throw "After Effects install path was not detected. Pass -AfterEffectsPath explicitly."
+    }
+
+    return $detected
 }
 
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
@@ -106,38 +134,51 @@ if (!(Test-Path $sourceScript)) {
 }
 
 $resolvedPreferredPath = Resolve-PreferredPathInput -ProvidedPath $AfterEffectsPath -RemainingArgs $args
-$aePath = Resolve-AfterEffectsPath -PreferredPath $resolvedPreferredPath
-$destinationFolder = Join-Path $aePath "Support Files\Scripts\ScriptUI Panels"
-$destinationScript = Join-Path $destinationFolder "mcp-bridge-auto.jsx"
+$installTargets = Resolve-InstallTargets -PreferredPath $resolvedPreferredPath
 
 Write-Host "Source      : $sourceScript"
-Write-Host "Destination : $destinationScript"
+Write-Host "Destinations:"
+foreach ($aePath in $installTargets) {
+    $destinationScript = Join-Path (Join-Path $aePath "Support Files\Scripts\ScriptUI Panels") "mcp-bridge-auto.jsx"
+    Write-Host "  - $destinationScript"
+}
 
 if ($DryRun) {
     Write-Host "DryRun mode: no file copy was executed."
     exit 0
 }
 
-try {
-    if (!(Test-Path $destinationFolder)) {
-        New-Item -ItemType Directory -Path $destinationFolder -Force | Out-Null
-    }
-    Copy-Item -Path $sourceScript -Destination $destinationScript -Force
-} catch {
-    if (-not (Test-IsAdministrator)) {
-        Write-Error @"
+$installedDestinations = @()
+foreach ($aePath in $installTargets) {
+    $destinationFolder = Join-Path $aePath "Support Files\Scripts\ScriptUI Panels"
+    $destinationScript = Join-Path $destinationFolder "mcp-bridge-auto.jsx"
+
+    try {
+        if (!(Test-Path $destinationFolder)) {
+            New-Item -ItemType Directory -Path $destinationFolder -Force | Out-Null
+        }
+        Copy-Item -Path $sourceScript -Destination $destinationScript -Force
+        $installedDestinations += $destinationScript
+    } catch {
+        if (-not (Test-IsAdministrator)) {
+            Write-Error @"
 Copy failed. Administrator privileges are required.
 Re-run in elevated PowerShell:
   powershell -ExecutionPolicy Bypass -File .\scripts\install-bridge.ps1
+Target: $destinationScript
 Original error: $($_.Exception.Message)
 "@
-        exit 1
+            exit 1
+        }
+        throw
     }
-    throw
 }
 
 Write-Host ""
-Write-Host "Bridge script installed."
+Write-Host ("Bridge script installed to {0} location(s)." -f $installedDestinations.Count)
+foreach ($destination in $installedDestinations) {
+    Write-Host "  - $destination"
+}
 Write-Host "Next steps:"
 Write-Host "1. Open After Effects"
 Write-Host "2. Edit > Preferences > Scripting & Expressions"

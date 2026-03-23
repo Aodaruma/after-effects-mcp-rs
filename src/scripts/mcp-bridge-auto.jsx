@@ -1367,12 +1367,15 @@ if (typeof JSON.stringify !== "function") {
     })();
 }
 
-// Detect AE version (AE 2025 = version 25.x, AE 2026 = version 26.x)
-var aeVersion = parseFloat(app.version);
-var isAE2025OrLater = aeVersion >= 25.0;
-
-// Always create a floating palette window for AE 2025+
-var panel = new Window("palette", "MCP Bridge Auto", undefined);
+// Create a dockable panel when executed from ScriptUI Panels.
+// Fallback to a floating palette when launched as a normal script.
+var panel = (this instanceof Panel)
+    ? this
+    : new Window("palette", "MCP Bridge Auto", undefined, { resizeable: true });
+var isDockablePanel = panel instanceof Panel;
+if (isDockablePanel) {
+    panel.text = "MCP Bridge Auto";
+}
 panel.orientation = "column";
 panel.alignChildren = ["fill", "top"];
 panel.spacing = 10;
@@ -1389,12 +1392,6 @@ logPanel.alignChildren = ["fill", "fill"];
 var logText = logPanel.add("edittext", undefined, "", {multiline: true, readonly: true});
 logText.preferredSize.height = 200;
 
-// AE 2025 warning
-if (isAE2025OrLater) {
-    var warning = panel.add("statictext", undefined, "AE 2025+: Dockable panels are not supported. Floating window only.");
-    warning.graphics.foregroundColor = warning.graphics.newPen(warning.graphics.PenType.SOLID_COLOR, [1,0.3,0,1], 1);
-}
-
 // Auto-run checkbox
 var autoRunCheckbox = panel.add("checkbox", undefined, "Auto-run commands");
 autoRunCheckbox.value = true;
@@ -1402,25 +1399,161 @@ autoRunCheckbox.value = true;
 // Check interval (ms)
 var checkInterval = 2000;
 var isChecking = false;
+var permissionStateKnown = false;
+var hasFileNetworkPermission = false;
+var hasShownPermissionDialog = false;
+var autoRunValueBeforePermissionLock = autoRunCheckbox.value;
+var commandCheckerTaskId = 0;
+
+function isControlValid(control) {
+    try {
+        if (!control) return false;
+        var _visible = control.visible;
+        return true;
+    } catch (_e) {
+        return false;
+    }
+}
+
+function setStatus(message) {
+    try {
+        if (isControlValid(statusText)) {
+            statusText.text = message;
+        }
+    } catch (_e) {}
+}
+
+function safePanelUpdate() {
+    try {
+        panel.update();
+    } catch (_e) {}
+}
+
+function getBridgeFolderPath() {
+    return Folder.myDocuments.fsName + "/ae-mcp-bridge";
+}
+
+function ensureBridgeFolder() {
+    var bridgeFolder = new Folder(getBridgeFolderPath());
+    if (!bridgeFolder.exists) {
+        if (!bridgeFolder.create()) {
+            throw new Error("Unable to create bridge folder: " + bridgeFolder.fsName);
+        }
+    }
+    return bridgeFolder;
+}
 
 // Command file path - use Documents folder for reliable access
 function getCommandFilePath() {
-    var userFolder = Folder.myDocuments;
-    var bridgeFolder = new Folder(userFolder.fsName + "/ae-mcp-bridge");
-    if (!bridgeFolder.exists) {
-        bridgeFolder.create();
-    }
+    var bridgeFolder = ensureBridgeFolder();
     return bridgeFolder.fsName + "/ae_command.json";
 }
 
 // Result file path - use Documents folder for reliable access
 function getResultFilePath() {
-    var userFolder = Folder.myDocuments;
-    var bridgeFolder = new Folder(userFolder.fsName + "/ae-mcp-bridge");
-    if (!bridgeFolder.exists) {
-        bridgeFolder.create();
-    }
+    var bridgeFolder = ensureBridgeFolder();
     return bridgeFolder.fsName + "/ae_mcp_result.json";
+}
+
+function hasFileNetworkAccessPermission() {
+    var probeFile = null;
+    try {
+        var bridgeFolder = ensureBridgeFolder();
+        probeFile = new File(bridgeFolder.fsName + "/.ae_mcp_permission_probe");
+        probeFile.encoding = "UTF-8";
+        if (!probeFile.open("w")) {
+            return false;
+        }
+        probeFile.write("ok");
+        probeFile.close();
+        if (probeFile.exists) {
+            probeFile.remove();
+        }
+        return true;
+    } catch (_e) {
+        try {
+            if (probeFile && probeFile.opened) {
+                probeFile.close();
+            }
+        } catch (_closeErr) {}
+        return false;
+    }
+}
+
+function showPermissionDialog() {
+    var shouldResume = commandCheckerTaskId !== 0;
+    if (shouldResume) {
+        stopCommandChecker();
+    }
+    alert(
+        "MCP Bridge Auto cannot access files/network.\n\n" +
+        "Enable \"Allow Scripts to Write Files and Access Network\" in:\n" +
+        "Edit > Preferences > Scripting & Expressions\n\n" +
+        "After enabling, restart After Effects or reopen this panel."
+    );
+    if (shouldResume) {
+        startCommandChecker();
+    }
+}
+
+function isModalDialogError(error) {
+    var message = "";
+    try {
+        message = (error && error.toString) ? error.toString() : ("" + error);
+    } catch (_e) {
+        return false;
+    }
+    var normalized = message.toLowerCase();
+    return normalized.indexOf("cannot run a script while a modal dialog") >= 0 ||
+           normalized.indexOf("modal dialog") >= 0;
+}
+
+function applyPermissionState(showDialog) {
+    if (!isControlValid(autoRunCheckbox) || !isControlValid(checkButton)) {
+        return;
+    }
+
+    if (!hasFileNetworkPermission) {
+        if (autoRunCheckbox.enabled) {
+            autoRunValueBeforePermissionLock = autoRunCheckbox.value;
+        }
+
+        autoRunCheckbox.value = false;
+        autoRunCheckbox.enabled = false;
+        checkButton.enabled = false;
+        setStatus("Permission required - Enable Scripts to Write Files and Access Network");
+
+        if (showDialog && !hasShownPermissionDialog) {
+            hasShownPermissionDialog = true;
+            showPermissionDialog();
+        }
+        return;
+    }
+
+    var wasLocked = !autoRunCheckbox.enabled || !checkButton.enabled;
+    autoRunCheckbox.enabled = true;
+    checkButton.enabled = true;
+    if (wasLocked) {
+        autoRunCheckbox.value = autoRunValueBeforePermissionLock;
+        hasShownPermissionDialog = false;
+        logToPanel("File/network access detected. Controls re-enabled.");
+    }
+    setStatus("Ready - Auto-run is " + (autoRunCheckbox.value ? "ON" : "OFF"));
+}
+
+function refreshPermissionState(showDialog) {
+    var granted = hasFileNetworkAccessPermission();
+    if (!permissionStateKnown || granted !== hasFileNetworkPermission) {
+        permissionStateKnown = true;
+        hasFileNetworkPermission = granted;
+        if (granted) {
+            logToPanel("File/network access is enabled.");
+        } else {
+            logToPanel("File/network access is disabled.");
+        }
+    }
+    applyPermissionState(showDialog);
+    return hasFileNetworkPermission;
 }
 
 // Functions for each script type
@@ -1555,8 +1688,8 @@ function executeCommand(command, args) {
     var result = "";
     
     logToPanel("Executing command: " + command);
-    statusText.text = "Running: " + command;
-    panel.update();
+    setStatus("Running: " + command);
+    safePanelUpdate();
     
     try {
         logToPanel("Attempting to execute: " + command); // Log before switch
@@ -1677,7 +1810,7 @@ function executeCommand(command, args) {
         logToPanel("Result file write process complete.");
         
         logToPanel("Command completed successfully: " + command); // Changed log message
-        statusText.text = "Command completed: " + command;
+        setStatus("Command completed: " + command);
         
         // Update command file status
         logToPanel("Updating command status to completed...");
@@ -1685,9 +1818,18 @@ function executeCommand(command, args) {
         logToPanel("Command status updated.");
         
     } catch (error) {
+        if (isModalDialogError(error)) {
+            logToPanel("Modal dialog detected. Command will be retried automatically.");
+            setStatus("Paused: modal dialog is open. Waiting to retry...");
+            try {
+                updateCommandStatus("pending");
+            } catch (_retryStateErr) {}
+            return;
+        }
+
         var errorMsg = "ERROR in executeCommand for '" + command + "': " + error.toString() + (error.line ? " (line: " + error.line + ")" : "");
         logToPanel(errorMsg); // Log detailed error
-        statusText.text = "Error: " + error.toString();
+        setStatus("Error: " + error.toString());
         
         // Write detailed error to result file
         try {
@@ -1745,12 +1887,26 @@ function updateCommandStatus(status) {
 // Log message to panel
 function logToPanel(message) {
     var timestamp = new Date().toLocaleTimeString();
-    logText.text = timestamp + ": " + message + "\n" + logText.text;
+    try {
+        if (!isControlValid(logText)) {
+            return;
+        }
+        logText.text = timestamp + ": " + message + "\n" + logText.text;
+    } catch (_e) {}
 }
 
 // Check for new commands
 function checkForCommands() {
-    if (!autoRunCheckbox.value || isChecking) return;
+    if (!isControlValid(autoRunCheckbox) || !isControlValid(checkButton)) {
+        stopCommandChecker();
+        return;
+    }
+    if (isChecking) return;
+    if (!refreshPermissionState(false)) return;
+    if (!autoRunCheckbox.value) {
+        setStatus("Ready - Auto-run is OFF");
+        return;
+    }
     
     isChecking = true;
     
@@ -1778,31 +1934,63 @@ function checkForCommands() {
         }
     } catch (e) {
         logToPanel("Error checking for commands: " + e.toString());
+    } finally {
+        isChecking = false;
     }
-    
-    isChecking = false;
 }
 
 // Set up timer to check for commands
 function startCommandChecker() {
-    app.scheduleTask("checkForCommands()", checkInterval, true);
+    stopCommandChecker();
+    commandCheckerTaskId = app.scheduleTask("checkForCommands()", checkInterval, true);
+}
+
+function stopCommandChecker() {
+    if (!commandCheckerTaskId) {
+        return;
+    }
+    try {
+        app.cancelTask(commandCheckerTaskId);
+    } catch (_e) {}
+    commandCheckerTaskId = 0;
 }
 
 // Add manual check button
 var checkButton = panel.add("button", undefined, "Check for Commands Now");
 checkButton.onClick = function() {
+    if (!refreshPermissionState(true)) {
+        return;
+    }
     logToPanel("Manually checking for commands");
     checkForCommands();
 };
 
 // Log startup
 logToPanel("MCP Bridge Auto started");
-logToPanel("Command file: " + getCommandFilePath());
-statusText.text = "Ready - Auto-run is " + (autoRunCheckbox.value ? "ON" : "OFF");
+logToPanel("UI mode: " + (isDockablePanel ? "dockable panel" : "floating window"));
+try {
+    logToPanel("Command file: " + getCommandFilePath());
+} catch (pathError) {
+    logToPanel("Command file path unavailable: " + pathError.toString());
+}
+refreshPermissionState(true);
 
 // Start the command checker
 startCommandChecker();
 
-// Show the panel
-panel.center();
-panel.show();
+panel.onClose = function () {
+    stopCommandChecker();
+    return true;
+};
+
+// Keep layout responsive for both docked panel and floating window.
+panel.onResizing = panel.onResize = function () {
+    this.layout.resize();
+};
+panel.layout.layout(true);
+
+// Show only when using floating window mode.
+if (!isDockablePanel) {
+    panel.center();
+    panel.show();
+}

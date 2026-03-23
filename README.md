@@ -90,11 +90,15 @@ Windows (PowerShell):
 powershell -ExecutionPolicy Bypass -File .\scripts\install-bridge.ps1
 ```
 
+Without `-AfterEffectsPath`, the installer copies to all detected `Adobe After Effects <YEAR>` installations.
+
 macOS (bash):
 
 ```bash
 bash ./scripts/install-bridge.sh
 ```
+
+Without `--ae-path`, the installer copies to all detected `/Applications/Adobe After Effects <YEAR>` installations.
 
 ### Configure After Effects
 
