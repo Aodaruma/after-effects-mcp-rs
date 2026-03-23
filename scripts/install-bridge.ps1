@@ -11,11 +11,70 @@ function Test-IsAdministrator {
     return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
+function Normalize-PathText {
+    param([string]$PathText)
+
+    if ([string]::IsNullOrWhiteSpace($PathText)) {
+        return $null
+    }
+
+    return $PathText.Trim().Trim('"').Trim("'")
+}
+
+function Resolve-PreferredPathInput {
+    param(
+        [string]$ProvidedPath,
+        [object[]]$RemainingArgs
+    )
+
+    $candidate = Normalize-PathText -PathText $ProvidedPath
+    if (-not $candidate) {
+        return $null
+    }
+
+    if (Test-Path -LiteralPath $candidate) {
+        return $candidate
+    }
+
+    if ($RemainingArgs -and $RemainingArgs.Count -gt 0) {
+        $parts = @($candidate)
+
+        foreach ($token in $RemainingArgs) {
+            $segment = [string]$token
+            if ($segment.StartsWith("-")) {
+                break
+            }
+            $parts += $segment
+        }
+
+        if ($parts.Count -gt 1) {
+            $joined = Normalize-PathText -PathText ($parts -join " ")
+            if ($joined) {
+                if (Test-Path -LiteralPath $joined) {
+                    return $joined
+                }
+
+                # gsudo/cmd argument parsing can leave a trailing "\" artifact.
+                if ($joined.Length -gt 3 -and $joined.EndsWith("\")) {
+                    $trimmed = $joined.Substring(0, $joined.Length - 1)
+                    if (Test-Path -LiteralPath $trimmed) {
+                        return $trimmed
+                    }
+                }
+
+                return $joined
+            }
+        }
+    }
+
+    return $candidate
+}
+
 function Resolve-AfterEffectsPath {
     param([string]$PreferredPath)
 
     if ($PreferredPath) {
-        if (Test-Path $PreferredPath) {
+        if (Test-Path -LiteralPath $PreferredPath) {
             return $PreferredPath
         }
         throw "Specified After Effects path not found: $PreferredPath"
@@ -31,7 +90,7 @@ function Resolve-AfterEffectsPath {
     )
 
     foreach ($path in $possiblePaths) {
-        if (Test-Path $path) {
+        if (Test-Path -LiteralPath $path) {
             return $path
         }
     }
@@ -46,7 +105,8 @@ if (!(Test-Path $sourceScript)) {
     throw "Bridge script not found: $sourceScript"
 }
 
-$aePath = Resolve-AfterEffectsPath -PreferredPath $AfterEffectsPath
+$resolvedPreferredPath = Resolve-PreferredPathInput -ProvidedPath $AfterEffectsPath -RemainingArgs $args
+$aePath = Resolve-AfterEffectsPath -PreferredPath $resolvedPreferredPath
 $destinationFolder = Join-Path $aePath "Support Files\Scripts\ScriptUI Panels"
 $destinationScript = Join-Path $destinationFolder "mcp-bridge-auto.jsx"
 
