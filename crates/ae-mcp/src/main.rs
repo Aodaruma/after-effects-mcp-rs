@@ -80,6 +80,7 @@ fn init_tracing(level: &str) {
     tracing_subscriber::fmt()
         .with_env_filter(filter)
         .with_target(false)
+        .with_writer(std::io::stderr)
         .init();
 }
 
