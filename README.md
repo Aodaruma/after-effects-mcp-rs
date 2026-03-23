@@ -1,224 +1,137 @@
-# 🎬 After Effects MCP Server
+# after-effects-mcp-rs
 
-![Node.js](https://img.shields.io/badge/node-%3E=14.x-brightgreen.svg)
-![Build](https://img.shields.io/badge/build-passing-success)
-![License](https://img.shields.io/github/license/Dakkshin/after-effects-mcp)
-![Platform](https://img.shields.io/badge/platform-after%20effects-blue)
+Rust 実装の After Effects MCP サーバーです。  
+After Effects 側の `mcp-bridge-auto.jsx` と、`~/Documents/ae-mcp-bridge` の command/result ファイルを使って連携します。
 
-✨ A Model Context Protocol (MCP) server for Adobe After Effects that enables AI assistants and other applications to control After Effects through a standardized protocol.
+## 現状（2026-03-23）
 
-<a href="https://glama.ai/mcp/servers/@Dakkshin/after-effects-mcp">
-  <img width="380" height="200" src="https://glama.ai/mcp/servers/@Dakkshin/after-effects-mcp/badge" alt="mcp-after-effects MCP server" />
-</a>
+- 実運用の中心は Rust バイナリ `ae-mcp`
+- `serve-stdio`（MCP サーバー）、`serve-daemon`、`service`（Win/macOS）を提供
+- エフェクト操作は以下をサポート
+  - `apply-effect`
+  - `apply-effect-template`
+  - `list-supported-effects`（既知エフェクトの利用可否チェック）
+  - `describe-effect`（エフェクトのパラメータ一覧取得）
+- ターゲット指定は `compId/layerId`（推奨）・`compName/layerName`・`compIndex/layerIndex`
 
-## Table of Contents
-- [Features](#features)
-  - [Core Composition Features](#core-composition-features)
-  - [Layer Management](#layer-management)
-  - [Animation Capabilities](#animation-capabilities)
-- [Setup Instructions](#setup-instructions)
-  - [Prerequisites](#prerequisites)
-  - [Installation](#installation)
-  - [Update MCP Config](#Update-MCP-Config)
-  - [Running the Server](#running-the-server)
-- [Usage Guide](#usage-guide)
-  - [Creating Compositions](#creating-compositions)
-  - [Working with Layers](#working-with-layers)
-  - [Animation](#animation)
-- [Available MCP Tools](#available-mcp-tools)
-- [For Developers](#for-developers)
-  - [Project Structure](#project-structure)
-  - [Building the Project](#building-the-project)
-  - [Contributing](#contributing)
-- [License](#license)
+## 必要環境
 
-## 📦 Features
+- Adobe After Effects（2022+ 推奨）
+- Rust stable / Cargo
+- Windows または macOS
 
-### 🎥 Core Composition Features
-- **Create compositions** with custom settings (size, frame rate, duration, background color)
-- **List all compositions** in a project
-- **Get project information** such as frame rate, dimensions, and duration
+## クイックスタート
 
-### 🧱 Layer Management
-- **Create text layers** with customizable properties (font, size, color, position)
-- **Create shape layers** (rectangle, ellipse, polygon, star) with colors and strokes
-- **Create solid/adjustment layers** for backgrounds and effects
-- **Modify layer properties** like position, scale, rotation, opacity, and timing
-
-### 🌀 Animation Capabilities
-- **Set keyframes** for layer properties (Position, Scale, Rotation, Opacity, etc.)
-- **Apply expressions** to layer properties for dynamic animations
-
-## ⚙️ Setup Instructions
-
-### 🛠 Prerequisites
-- Adobe After Effects (2022 or later)
-- Node.js (v14 or later)
-- npm or yarn package manager
-
-### 📥 Installation
-
-1. **Clone the repository**
-   ```bash
-   git clone https://github.com/Dakkshin/after-effects-mcp.git
-   cd after-effects-mcp
-   ```
-
-2. **Install dependencies**
-   ```bash
-   npm install
-   # or
-   yarn install
-   ```
-
-3. **Build the project**
-   ```bash
-   npm run build
-   # or
-   yarn build
-   ```
-
-4. **Install the After Effects panel**
-   ```bash
-   npm run install-bridge
-   # or
-   yarn install-bridge
-   ```
-   This will copy the necessary scripts to your After Effects installation.
-
-### 🔧 Update MCP Config
-
-Go to your client (eg. Claude or Cursor ) and update your config file
-
-```json
-{
-  "mcpServers": {
-    "AfterEffectsMCP": {
-      "command": "node",
-      "args": ["C:\\Users\\Dakkshin\\after-effects-mcp\\build\\index.js"]
-    }
-  }
-}
-```
-
-### ▶️ Running the Server
-
-1. **Start the MCP server**
-   ```bash
-   npm start
-   # or
-   yarn start
-   ```
-
-2. **Open After Effects**
-
-3. **Open the MCP Bridge Auto panel**
-   - In After Effects, go to Window > mcp-bridge-auto.jsx
-   - The panel will automatically check for commands every few seconds
-   - Make sure the "Auto-run commands" checkbox is enabled
-
-## 🚀 Usage Guide
-
-Once you have the server running and the MCP Bridge panel open in After Effects, you can control After Effects through the MCP protocol. This allows AI assistants or custom applications to send commands to After Effects.
-
-### 📘 Creating Compositions
-
-You can create new compositions with custom settings:
-- Name
-- Width and height (in pixels)
-- Frame rate
-- Duration
-- Background color
-
-Example MCP tool usage (for developers):
-```javascript
-mcp_aftereffects_create_composition({
-  name: "My Composition", 
-  width: 1920, 
-  height: 1080, 
-  frameRate: 30,
-  duration: 10
-});
-```
-
-### ✍️ Working with Layers
-
-You can create and modify different types of layers:
-
-**Text layers:**
-- Set text content, font, size, and color
-- Position text anywhere in the composition
-- Adjust timing and opacity
-
-**Shape layers:**
-- Create rectangles, ellipses, polygons, and stars
-- Set fill and stroke colors
-- Customize size and position
-
-**Solid layers:**
-- Create background colors
-- Make adjustment layers for effects
-
-### 🕹 Animation
-
-You can animate layers with:
-
-**Keyframes:**
-- Set property values at specific times
-- Create motion, scaling, rotation, and opacity changes
-- Control the timing of animations
-
-**Expressions:**
-- Apply JavaScript expressions to properties
-- Create dynamic, procedural animations
-- Connect property values to each other
-
-## 🛠 Available MCP Tools
-
-| Command              | Description                            |
-|----------------------|----------------------------------------|
-| \`create-composition\` | Create a new comp                      |
-| \`run-script\`         | Run a JS script inside AE              |
-| \`get-results\`        | Get script results                     |
-| \`get-help\`           | Help for available commands            |
-| \`setLayerKeyframe\`   | Add keyframe to layer property         |
-| \`setLayerExpression\` | Add/remove expressions from properties |
-
-## 👨‍💻 For Developers
-
-### 🧩 Project Structure
-
-- `src/index.ts`: MCP server implementation
-- `src/scripts/mcp-bridge-auto.jsx`: Main After Effects panel script
-- `install-bridge.js`: Script to install the panel in After Effects
-
-### 📦 Building the Project
+### 1. ビルド
 
 ```bash
-npm run build
-# or
-yarn build
+cargo build --release -p ae-mcp
 ```
 
-### 🤝 Contributing
+- Windows: `target/release/ae-mcp.exe`
+- macOS: `target/release/ae-mcp`
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+### 2. Bridge パネル導入（npm不要）
 
-## Star History
+Windows:
 
-[![Star History Chart](https://api.star-history.com/svg?repos=Dakkshin/after-effects-mcp&type=date&legend=top-left)](https://www.star-history.com/#Dakkshin/after-effects-mcp&type=date&legend=top-left)
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\install-bridge.ps1
+```
 
-## License
+macOS:
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+```bash
+bash ./scripts/install-bridge.sh
+```
 
-## Rust Migration Docs
+### 3. After Effects 側設定
+
+1. `Edit > Preferences > Scripting & Expressions`
+2. `Allow Scripts to Write Files and Access Network` を有効化
+3. After Effects 再起動
+4. `Window > mcp-bridge-auto.jsx` を開く
+5. `Auto-run commands` を ON
+
+### 4. Codex MCP 設定例
+
+```bash
+codex mcp add aftereffects -- "<ABSOLUTE_PATH_TO>/target/release/ae-mcp.exe" serve-stdio
+```
+
+macOS は実行ファイル名から `.exe` を外してください。
+
+### 5. 動作確認
+
+```powershell
+.\target\release\ae-mcp.exe health
+.\target\release\ae-mcp.exe bridge run-script --script listCompositions --parameters '{}'
+.\target\release\ae-mcp.exe bridge get-results
+```
+
+## 主要ツール
+
+- 基本
+  - `run-script`
+  - `get-results`
+  - `get-help`
+  - `create-composition`
+  - `setLayerKeyframe`
+  - `setLayerExpression`
+- エフェクト
+  - `apply-effect`
+  - `apply-effect-template`
+  - `list-supported-effects`
+  - `describe-effect`
+  - `mcp_aftereffects_get_effects_help`
+
+`run-script` は allowlist 方式です（任意スクリプト実行ではありません）。
+
+## ID 指定について
+
+- Composition ID は `listCompositions` 結果で取得可能
+- Layer ID は `createTextLayer` / `createShapeLayer` / `createSolidLayer` / `applyEffect` / `applyEffectTemplate` の結果で取得可能
+- `getLayerInfo` でも Layer ID を返します（アクティブコンポ前提）
+
+推奨は `compId/layerId` での指定です。
+
+## エフェクト調査の推奨フロー
+
+1. `list-supported-effects` で環境可用性を確認
+2. `describe-effect` で対象エフェクトのパラメータ名・範囲を確認
+3. `apply-effect` で `effectSettings` を指定して適用
+
+補足:
+- プラグイン系エフェクトは表示名と `matchName` が一致しない場合があります。
+- 例: Glow は環境により `ADBE Glow` ではなく `ADBE Glo2` の場合があります。
+
+## トラブルシュート
+
+### `ae_command.json` が `pending` のまま
+
+- `mcp-bridge-auto.jsx` が開いていない
+- `Auto-run commands` が OFF
+- パネル再読込漏れ（更新後は再オープン推奨）
+
+### `get-results` が `waiting` / stale warning
+
+- AE 側パネル未実行の可能性が高いです。
+- `~/Documents/ae-mcp-bridge/ae_command.json` / `ae_mcp_result.json` の更新時刻を確認してください。
+
+### Windows `service install` で Access Denied
+
+- 管理者権限で実行してください（`gsudo` または管理者 PowerShell）。
+
+### PowerShell で `-AfterEffectsPath` が `C:\Program` に切れる
+
+- 引数をシングルクォートで渡してください。
+  - 例: `-AfterEffectsPath 'C:\Program Files\Adobe\Adobe After Effects 2025'`
+
+## 関連ドキュメント
 
 - [Rust migration specification](docs/specification-rust-migration.md)
 - [Development stages](docs/development-stages.md)
 - [Codex MCP setup guide](docs/setup-codex-mcp.md)
 - [Installer E2E guide](docs/installer-e2e.md)
-- [Signing and RC guide](docs/signing-and-rc.md)
-- [TS to Rust migration guide](docs/migration-guide-ts-to-rust.md)
 - [Operations runbook](docs/operations-runbook.md)
 - [GA release checklist](docs/release-checklist.md)
