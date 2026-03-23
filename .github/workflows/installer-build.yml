@@ -2,9 +2,6 @@ name: Build Installers
 
 on:
   workflow_dispatch:
-  push:
-    tags:
-      - "v*"
 
 jobs:
   windows-installer:
@@ -57,4 +54,3 @@ jobs:
         with:
           name: macos-installers
           path: dist/macos/*
-
