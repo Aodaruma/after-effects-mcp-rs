@@ -3,6 +3,7 @@ members = [
     "crates/ae-mcp",
     "crates/bridge-core",
     "crates/mcp-core",
+    "crates/platform-service",
 ]
 resolver = "2"
 

@@ -3,6 +3,7 @@ use clap::{Parser, Subcommand};
 use mcp_core::AppConfig;
 use std::path::PathBuf;
 use std::time::Duration;
+use tokio::time::sleep;
 use tracing::info;
 
 mod mcp_stdio;
@@ -22,6 +23,20 @@ enum Commands {
     ServeStdio {
         #[arg(long)]
         once: bool,
+    },
+    /// Daemon mode intended for OS service execution.
+    ServeDaemon {
+        #[arg(long)]
+        once: bool,
+    },
+    /// Service management (Windows Service / macOS launchd).
+    Service {
+        #[arg(long, default_value = "AfterEffectsMcpDaemon")]
+        service_name: String,
+        #[arg(long, default_value = "After Effects MCP Daemon")]
+        display_name: String,
+        #[command(subcommand)]
+        command: ServiceCommands,
     },
     /// Stage 2: direct bridge operations for validation.
     Bridge {
@@ -48,6 +63,15 @@ enum BridgeCommands {
     },
 }
 
+#[derive(Debug, Subcommand)]
+enum ServiceCommands {
+    Install,
+    Uninstall,
+    Start,
+    Stop,
+    Status,
+}
+
 fn init_tracing(level: &str) {
     let filter = tracing_subscriber::EnvFilter::try_new(level).unwrap_or_else(|_| {
         tracing_subscriber::EnvFilter::new("info")
@@ -62,12 +86,19 @@ fn init_tracing(level: &str) {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
+    let cli_config = cli.config.clone();
     let cfg = AppConfig::load(cli.config.as_deref())?;
     init_tracing(&cfg.log_level);
     bridge_core::ensure_bridge_dir(&cfg)?;
 
     match cli.command {
         Commands::ServeStdio { once } => serve_stdio(cfg, once).await,
+        Commands::ServeDaemon { once } => serve_daemon(once).await,
+        Commands::Service {
+            service_name,
+            display_name,
+            command,
+        } => run_service_command(cli_config, service_name, display_name, command),
         Commands::Bridge { command } => run_bridge_command(cfg, command),
         Commands::Health => {
             println!("status=ok");
@@ -83,6 +114,50 @@ async fn serve_stdio(cfg: AppConfig, once: bool) -> Result<()> {
         return Ok(());
     }
     mcp_stdio::run_stdio_server(cfg).await
+}
+
+async fn serve_daemon(once: bool) -> Result<()> {
+    info!("serve-daemon started");
+    if once {
+        return Ok(());
+    }
+    loop {
+        info!("serve-daemon heartbeat");
+        sleep(Duration::from_secs(60)).await;
+    }
+}
+
+fn run_service_command(
+    cli_config: Option<PathBuf>,
+    service_name: String,
+    display_name: String,
+    command: ServiceCommands,
+) -> Result<()> {
+    let current_exe = std::env::current_exe()?;
+    let mut args = vec!["serve-daemon".to_string()];
+    if let Some(path) = cli_config {
+        args.push("--config".to_string());
+        args.push(path.to_string_lossy().to_string());
+    }
+
+    let service_cfg = platform_service::ServiceConfig {
+        service_name,
+        display_name,
+        description: "After Effects MCP daemon service".to_string(),
+        binary_path: current_exe,
+        args,
+    };
+
+    let action = match command {
+        ServiceCommands::Install => platform_service::ServiceAction::Install,
+        ServiceCommands::Uninstall => platform_service::ServiceAction::Uninstall,
+        ServiceCommands::Start => platform_service::ServiceAction::Start,
+        ServiceCommands::Stop => platform_service::ServiceAction::Stop,
+        ServiceCommands::Status => platform_service::ServiceAction::Status,
+    };
+    let output = platform_service::run(action, &service_cfg)?;
+    println!("{output}");
+    Ok(())
 }
 
 fn run_bridge_command(cfg: AppConfig, command: BridgeCommands) -> Result<()> {
