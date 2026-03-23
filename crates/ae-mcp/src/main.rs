@@ -1,10 +1,11 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use std::str::FromStr;
 use mcp_core::AppConfig;
 use std::path::PathBuf;
 use std::time::Duration;
 use tracing::info;
+
+mod mcp_stdio;
 
 #[derive(Debug, Parser)]
 #[command(name = "ae-mcp", version, about = "After Effects MCP server (Rust)")]
@@ -17,7 +18,7 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Commands {
-    /// Stage 1: minimal stdio server loop.
+    /// MCP stdio server mode.
     ServeStdio {
         #[arg(long)]
         once: bool,
@@ -66,7 +67,7 @@ async fn main() -> Result<()> {
     bridge_core::ensure_bridge_dir(&cfg)?;
 
     match cli.command {
-        Commands::ServeStdio { once } => serve_stdio(once).await,
+        Commands::ServeStdio { once } => serve_stdio(cfg, once).await,
         Commands::Bridge { command } => run_bridge_command(cfg, command),
         Commands::Health => {
             println!("status=ok");
@@ -76,15 +77,12 @@ async fn main() -> Result<()> {
     }
 }
 
-async fn serve_stdio(once: bool) -> Result<()> {
+async fn serve_stdio(cfg: AppConfig, once: bool) -> Result<()> {
     info!("serve-stdio started");
     if once {
         return Ok(());
     }
-
-    loop {
-        tokio::time::sleep(Duration::from_secs(60)).await;
-    }
+    mcp_stdio::run_stdio_server(cfg).await
 }
 
 fn run_bridge_command(cfg: AppConfig, command: BridgeCommands) -> Result<()> {
@@ -98,7 +96,7 @@ fn run_bridge_command(cfg: AppConfig, command: BridgeCommands) -> Result<()> {
                     mcp_core::ALLOWED_SCRIPTS.join(", ")
                 );
             }
-            let value = serde_json::Value::from_str(&parameters)?;
+            let value: serde_json::Value = serde_json::from_str(&parameters)?;
             bridge.clear_results_file()?;
             bridge.write_command_file(&script, value)?;
             println!(
