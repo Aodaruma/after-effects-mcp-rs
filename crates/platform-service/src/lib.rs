@@ -51,7 +51,7 @@ fn install(cfg: &ServiceConfig) -> Result<String> {
         .with_context(|| "failed to execute 'sc create'")?;
 
     if !output.status.success() {
-        return Err(anyhow!(render_output("sc create", output)));
+        return Err(anyhow!(render_sc_error("install", "sc create", output)));
     }
 
     let _ = Command::new("sc")
@@ -71,7 +71,7 @@ fn uninstall(cfg: &ServiceConfig) -> Result<String> {
         .output()
         .with_context(|| "failed to execute 'sc delete'")?;
     if !output.status.success() {
-        return Err(anyhow!(render_output("sc delete", output)));
+        return Err(anyhow!(render_sc_error("uninstall", "sc delete", output)));
     }
     Ok("service uninstalled".to_string())
 }
@@ -83,7 +83,7 @@ fn start(cfg: &ServiceConfig) -> Result<String> {
         .output()
         .with_context(|| "failed to execute 'sc start'")?;
     if !output.status.success() {
-        return Err(anyhow!(render_output("sc start", output)));
+        return Err(anyhow!(render_sc_error("start", "sc start", output)));
     }
     Ok("service started".to_string())
 }
@@ -95,7 +95,7 @@ fn stop(cfg: &ServiceConfig) -> Result<String> {
         .output()
         .with_context(|| "failed to execute 'sc stop'")?;
     if !output.status.success() {
-        return Err(anyhow!(render_output("sc stop", output)));
+        return Err(anyhow!(render_sc_error("stop", "sc stop", output)));
     }
     Ok("service stopped".to_string())
 }
@@ -107,7 +107,7 @@ fn status(cfg: &ServiceConfig) -> Result<String> {
         .output()
         .with_context(|| "failed to execute 'sc query'")?;
     if !output.status.success() {
-        return Err(anyhow!(render_output("sc query", output)));
+        return Err(anyhow!(render_sc_error("status", "sc query", output)));
     }
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
@@ -261,6 +261,21 @@ fn render_output(command: &str, output: std::process::Output) -> String {
         stdout.trim(),
         stderr.trim()
     )
+}
+
+#[cfg(target_os = "windows")]
+fn render_sc_error(action: &str, command: &str, output: std::process::Output) -> String {
+    let status_code = output.status.code().unwrap_or(-1);
+    let raw = render_output(command, output);
+    if status_code == 5 {
+        return format!(
+            "service {action} failed with Access Denied (exit code 5). \
+Please run this command from an elevated Administrator PowerShell.\n\
+Hint: Start menu -> PowerShell -> Run as Administrator.\n\
+raw: {raw}"
+        );
+    }
+    raw
 }
 
 #[cfg(test)]
