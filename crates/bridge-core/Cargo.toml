@@ -1,0 +1,16 @@
+[package]
+name = "bridge-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+mcp-core = { path = "../mcp-core" }
+
+[dev-dependencies]
+tempfile = "3.20"
+

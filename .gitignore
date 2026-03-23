@@ -47,6 +47,7 @@ logs/
 
 # Build output
 /build
+/target
 
 # Temporary files
 /temp
@@ -66,4 +67,3 @@ yarn-error.log*
 # CLAUDE.md file
 CLAUDE.md
 settings.local.json
-
