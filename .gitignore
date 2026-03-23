@@ -48,6 +48,7 @@ logs/
 # Build output
 /build
 /target
+/dist
 
 # Temporary files
 /temp

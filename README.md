@@ -217,3 +217,4 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 - [Rust migration specification](docs/specification-rust-migration.md)
 - [Development stages](docs/development-stages.md)
 - [Codex MCP setup guide](docs/setup-codex-mcp.md)
+- [Installer E2E guide](docs/installer-e2e.md)
