@@ -1,0 +1,178 @@
+# after-effects-mcp-rs セットアップ手順（Codex MCP設定込み）
+
+- 最終更新: 2026-03-23
+- 対象OS: Windows / macOS
+- 対象: Rust版 `ae-mcp` を Codex のカスタムMCPサーバーとして使う
+
+## 1. 前提
+
+1. Adobe After Effects（2022以降推奨）
+2. Rust（stable）と Cargo
+3. `mcp-bridge-auto.jsx` を After Effects で開けること
+4. Codex CLI もしくは Codex IDE Extension が利用可能であること
+
+## 2. Rustバイナリをビルド
+
+リポジトリルートで実行:
+
+```bash
+cargo build --release -p ae-mcp
+```
+
+生成物:
+- Windows: `target/release/ae-mcp.exe`
+- macOS: `target/release/ae-mcp`
+
+## 3. After Effectsブリッジパネルを導入（npm不要）
+
+このプロジェクトは AE 連携に `mcp-bridge-auto.jsx`（ScriptUI Panel）を使います。
+
+### 3.1 推奨（シェルスクリプト）
+
+Windows（PowerShell）:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\install-bridge.ps1
+```
+
+macOS（bash）:
+
+```bash
+bash ./scripts/install-bridge.sh
+```
+
+インストール先を手動指定する場合:
+
+Windows:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\install-bridge.ps1 -AfterEffectsPath "C:\Program Files\Adobe\Adobe After Effects 2026"
+```
+
+macOS:
+
+```bash
+bash ./scripts/install-bridge.sh --ae-path "/Applications/Adobe After Effects 2026"
+```
+
+### 3.2 手動配置（必要時）
+
+- `src/scripts/mcp-bridge-auto.jsx` を After Effects の ScriptUI Panels に配置
+  - Windows: `C:\Program Files\Adobe\Adobe After Effects <VERSION>\Support Files\Scripts\ScriptUI Panels\`
+  - macOS: `/Applications/Adobe After Effects <VERSION>/Scripts/ScriptUI Panels/`
+
+After Effects 側で:
+1. Scripting & Expressions の「Allow Scripts to Write Files and Access Network」を有効化
+2. 再起動
+3. `Window > mcp-bridge-auto.jsx` を開く
+4. `Auto-run commands` を ON
+
+## 4. CodexにMCPサーバーを登録（推奨: CLI）
+
+OpenAI公式ドキュメントの `codex mcp add ... -- <stdio command>` 形式に合わせます。
+
+## 4.1 Windows例
+
+```powershell
+codex mcp add aftereffects -- "C:\Users\<YOU>\path\after-effects-mcp-rs\target\release\ae-mcp.exe" serve-stdio
+```
+
+## 4.2 macOS例
+
+```bash
+codex mcp add aftereffects -- /Users/<YOU>/path/after-effects-mcp-rs/target/release/ae-mcp serve-stdio
+```
+
+登録確認:
+
+```bash
+codex mcp list
+```
+
+TUI上でも `/mcp` で有効サーバーを確認できます。
+
+## 5. `~/.codex/config.toml` へ手動設定する場合
+
+`codex mcp add` を使わず直接書く場合は、以下のように設定します。
+
+### 5.1 Windows例
+
+```toml
+[mcp_servers.aftereffects]
+command = "C:\\Users\\<YOU>\\path\\after-effects-mcp-rs\\target\\release\\ae-mcp.exe"
+args = ["serve-stdio"]
+cwd = "C:\\Users\\<YOU>\\path\\after-effects-mcp-rs"
+startup_timeout_sec = 20
+tool_timeout_sec = 120
+enabled = true
+```
+
+### 5.2 macOS例
+
+```toml
+[mcp_servers.aftereffects]
+command = "/Users/<YOU>/path/after-effects-mcp-rs/target/release/ae-mcp"
+args = ["serve-stdio"]
+cwd = "/Users/<YOU>/path/after-effects-mcp-rs"
+startup_timeout_sec = 20
+tool_timeout_sec = 120
+enabled = true
+```
+
+## 6. 動作確認（最短）
+
+1. After Effects を起動
+2. `Window > mcp-bridge-auto.jsx` を開き、`Auto-run commands` を ON
+3. Codex 側で `aftereffects` サーバーが有効であることを確認
+4. Codex から `run-script` (`script=listCompositions`) を実行
+5. 続けて `get-results` を実行し、JSON結果が返ることを確認
+
+補足:
+- ブリッジファイルは `~/Documents/ae-mcp-bridge/` に作成されます
+  - `ae_command.json`
+  - `ae_mcp_result.json`
+
+## 7. サービス（daemon）登録を使う場合
+
+`serve-daemon` と `service` サブコマンドは実装済みです。
+
+### 7.1 Windows
+
+```powershell
+.\target\release\ae-mcp.exe service install
+.\target\release\ae-mcp.exe service status
+.\target\release\ae-mcp.exe service start
+.\target\release\ae-mcp.exe service stop
+.\target\release\ae-mcp.exe service uninstall
+```
+
+`OpenSCManager FAILED 5`（Access Denied）が出る場合:
+- 管理者権限の PowerShell で実行してください
+
+### 7.2 macOS
+
+```bash
+./target/release/ae-mcp service install
+./target/release/ae-mcp service status
+./target/release/ae-mcp service start
+./target/release/ae-mcp service stop
+./target/release/ae-mcp service uninstall
+```
+
+## 8. よくあるトラブル
+
+1. `get-results` が stale warning を返す
+- AE側パネルが閉じているか、`Auto-run commands` が OFF の可能性があります。
+
+2. Codexからサーバーが見えない
+- `codex mcp list` で登録状態確認
+- `~/.codex/config.toml` の `command` 絶対パスを確認
+- バイナリ再ビルド後はパスが変わっていないか確認
+
+3. パネルは動いているのに結果が返らない
+- `~/Documents/ae-mcp-bridge/ae_command.json` の `status` が `pending/running/completed/error` のどこで止まっているか確認
+
+## 9. 参考（公式）
+
+- Codex MCP設定: <https://developers.openai.com/codex/mcp>
+- Docs MCP（Codex設定例）: <https://developers.openai.com/learn/docs-mcp>

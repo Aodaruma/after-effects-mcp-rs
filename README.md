@@ -211,3 +211,9 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 ## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
+
+## Rust Migration Docs
+
+- [Rust migration specification](docs/specification-rust-migration.md)
+- [Development stages](docs/development-stages.md)
+- [Codex MCP setup guide](docs/setup-codex-mcp.md)
