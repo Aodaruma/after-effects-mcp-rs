@@ -219,3 +219,6 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 - [Codex MCP setup guide](docs/setup-codex-mcp.md)
 - [Installer E2E guide](docs/installer-e2e.md)
 - [Signing and RC guide](docs/signing-and-rc.md)
+- [TS to Rust migration guide](docs/migration-guide-ts-to-rust.md)
+- [Operations runbook](docs/operations-runbook.md)
+- [GA release checklist](docs/release-checklist.md)
