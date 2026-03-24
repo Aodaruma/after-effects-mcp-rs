@@ -10,35 +10,57 @@ It communicates with AE through the `mcp-bridge-auto.jsx` panel and file bridge 
 
 - 日本語版: [README-ja.md](README-ja.md)
 
-## Table of Contents
+## 0. Table of Contents
 
-- [Features](#features)
-  - [Core Composition Features](#core-composition-features)
-  - [Layer and Animation Features](#layer-and-animation-features)
-  - [Effects and Introspection](#effects-and-introspection)
-  - [Operations and Distribution](#operations-and-distribution)
-- [Setup](#setup)
-  - [Prerequisites](#prerequisites)
-  - [Build](#build)
-  - [Install AE Bridge Panel](#install-ae-bridge-panel)
-  - [Configure After Effects](#configure-after-effects)
-  - [Register MCP Server](#register-mcp-server)
-- [Quick Validation](#quick-validation)
-- [Usage Examples](#usage-examples)
-- [Available MCP Tools](#available-mcp-tools)
-- [Troubleshooting](#troubleshooting)
-- [Docs](#docs)
-- [License](#license)
+- [1. Improvements from Upstream Fork](#1-improvements-from-upstream-fork)
+- [2. Features](#2-features)
+  - [2.1 Core Composition Features](#21-core-composition-features)
+  - [2.2 Layer and Animation Features](#22-layer-and-animation-features)
+  - [2.3 Effects and Introspection](#23-effects-and-introspection)
+  - [2.4 Operations and Distribution](#24-operations-and-distribution)
+- [3. Setup](#3-setup)
+  - [3.1 User Install (For Users)](#31-user-install-for-users)
+    - [3.1-A Download Binary](#31-a-download-binary)
+    - [3.1-B Install AE Bridge Panel](#31-b-install-ae-bridge-panel)
+    - [3.1-C Configure After Effects](#31-c-configure-after-effects)
+    - [3.1-D Register MCP Server](#31-d-register-mcp-server)
+  - [3.2 Development Setup (From Source)](#32-development-setup-from-source)
+    - [3.2-A Prerequisites](#32-a-prerequisites)
+    - [3.2-B Build](#32-b-build)
+    - [3.2-C Install AE Bridge Panel with Script](#32-c-install-ae-bridge-panel-with-script)
+    - [3.2-D Configure After Effects](#32-d-configure-after-effects)
+    - [3.2-E Register MCP Server](#32-e-register-mcp-server)
+- [4. Quick Validation](#4-quick-validation)
+- [5. Usage Examples](#5-usage-examples)
+- [6. Available MCP Tools](#6-available-mcp-tools)
+- [7. Troubleshooting](#7-troubleshooting)
+- [8. Docs](#8-docs)
+- [9. License](#9-license)
 
-## Features
+## 1. Improvements from Upstream Fork
 
-### Core Composition Features
+- Migrated runtime from Node.js/TypeScript to Rust (`ae-mcp`) for simpler deployment.
+- Removed npm/yarn dependency from the runtime path and bridge installation flow.
+- Added `compId/layerId`-based targeting to reduce index drift and mis-application risks.
+- Added effect introspection tools:
+  - `list-supported-effects`
+  - `describe-effect`
+- Improved ExtendScript compatibility (`Object.keys`-free bridge scripts for older AE engines).
+- Upgraded `mcp-bridge-auto.jsx` with:
+  - Dockable panel support
+  - Permission-aware UI state handling
+  - Modal-dialog-safe retry behavior
+- Added cross-platform packaging and release automation for Windows/macOS artifacts.
+
+## 2. Features
+
+### 2.1 Core Composition Features
 
 - Create compositions with custom width, height, duration, framerate, and background.
 - List compositions and fetch project metadata.
 - Keep MCP prompt/resource/tool naming compatible with the previous TS server.
 
-### Layer and Animation Features
+### 2.2 Layer and Animation Features
 
 - Create text, shape, and solid/adjustment layers.
 - Update layer properties.
@@ -48,7 +70,7 @@ It communicates with AE through the `mcp-bridge-auto.jsx` panel and file bridge 
   - `compName/layerName`
   - `compIndex/layerIndex`
 
-### Effects and Introspection
+### 2.3 Effects and Introspection
 
 - Apply effects directly (`apply-effect`) or via templates (`apply-effect-template`).
 - `smooth-gradient` template with Gradient Ramp fallback support.
@@ -56,22 +78,73 @@ It communicates with AE through the `mcp-bridge-auto.jsx` panel and file bridge 
 - `describe-effect`: temporarily add an effect and return available parameter metadata.
 - ExtendScript compatibility fix for older AE scripting engines (no `Object.keys` dependency).
 
-### Operations and Distribution
+### 2.4 Operations and Distribution
 
 - `serve-stdio` for MCP clients.
 - `serve-daemon` and `service` subcommands for OS-level service management.
 - Windows/macOS packaging scripts and CI workflows for installer artifacts.
 - Repository is now Rust-only (legacy npm/TypeScript server files were removed).
 
-## Setup
+## 3. Setup
 
-### Prerequisites
+### 3.1 User Install (For Users)
+
+#### 3.1-A Download Binary
+
+Download the latest release from [GitHub Releases](https://github.com/Aodaruma/after-effects-mcp-rs/releases/latest).
+
+- Windows:
+  - `after-effects-mcp-rs-windows-x86_64.msi` (installer)
+  - `after-effects-mcp-rs-windows-x86_64.zip` (portable binary)
+- macOS:
+  - `after-effects-mcp-rs-macos-universal.pkg` (installer)
+  - `after-effects-mcp-rs-macos-universal.tar.gz` (portable binary)
+
+#### 3.1-B Install AE Bridge Panel
+
+Download `mcp-bridge-auto.jsx` from:
+
+- `src/scripts/mcp-bridge-auto.jsx` in this repository, or
+- [raw file link](https://raw.githubusercontent.com/Aodaruma/after-effects-mcp-rs/main/src/scripts/mcp-bridge-auto.jsx)
+
+Then copy it to:
+
+- Windows: `C:\Program Files\Adobe\Adobe After Effects <YEAR>\Support Files\Scripts\ScriptUI Panels\`
+- macOS: `/Applications/Adobe After Effects <YEAR>/Scripts/ScriptUI Panels/`
+
+#### 3.1-C Configure After Effects
+
+1. Open `Edit > Preferences > Scripting & Expressions`.
+2. Enable `Allow Scripts to Write Files and Access Network`.
+3. Restart After Effects.
+4. Open `Window > mcp-bridge-auto.jsx`.
+5. Turn on `Auto-run commands`.
+
+#### 3.1-D Register MCP Server
+
+Examples for Codex CLI:
+
+Windows (`.msi` default location):
+
+```powershell
+codex mcp add aftereffects -- "C:\Program Files\AfterEffectsMcp\ae-mcp.exe" serve-stdio
+```
+
+macOS (`.pkg` default location):
+
+```bash
+codex mcp add aftereffects -- /usr/local/bin/ae-mcp serve-stdio
+```
+
+### 3.2 Development Setup (From Source)
+
+#### 3.2-A Prerequisites
 
 - Adobe After Effects (2022+ recommended)
 - Rust stable + Cargo
 - Windows or macOS
 
-### Build
+#### 3.2-B Build
 
 ```bash
 cargo build --release -p ae-mcp
@@ -82,7 +155,7 @@ Artifacts:
 - Windows: `target/release/ae-mcp.exe`
 - macOS: `target/release/ae-mcp`
 
-### Install AE Bridge Panel
+#### 3.2-C Install AE Bridge Panel with Script
 
 Windows (PowerShell):
 
@@ -100,7 +173,7 @@ bash ./scripts/install-bridge.sh
 
 Without `--ae-path`, the installer copies to all detected `/Applications/Adobe After Effects <YEAR>` installations.
 
-### Configure After Effects
+#### 3.2-D Configure After Effects
 
 1. Open `Edit > Preferences > Scripting & Expressions`.
 2. Enable `Allow Scripts to Write Files and Access Network`.
@@ -108,7 +181,7 @@ Without `--ae-path`, the installer copies to all detected `/Applications/Adobe A
 4. Open `Window > mcp-bridge-auto.jsx`.
 5. Turn on `Auto-run commands`.
 
-### Register MCP Server
+#### 3.2-E Register MCP Server
 
 Codex CLI example:
 
@@ -118,15 +191,15 @@ codex mcp add aftereffects -- "<ABSOLUTE_PATH>/target/release/ae-mcp.exe" serve-
 
 For macOS, remove `.exe`.
 
-## Quick Validation
+## 4. Quick Validation
 
 ```powershell
-.\target\release\ae-mcp.exe health
-.\target\release\ae-mcp.exe bridge run-script --script listCompositions --parameters '{}'
-.\target\release\ae-mcp.exe bridge get-results
+<AE_MCP_PATH> health
+<AE_MCP_PATH> bridge run-script --script listCompositions --parameters '{}'
+<AE_MCP_PATH> bridge get-results
 ```
 
-## Usage Examples
+## 5. Usage Examples
 
 Apply an effect using stable IDs:
 
@@ -161,7 +234,7 @@ List effect availability in current environment:
 }
 ```
 
-## Available MCP Tools
+## 6. Available MCP Tools
 
 | Tool | Description |
 |---|---|
@@ -182,7 +255,7 @@ List effect availability in current environment:
 | `mcp_aftereffects_get_effects_help` | Effects help text |
 | `run-bridge-test` | Queue bridge/effects smoke test |
 
-## Troubleshooting
+## 7. Troubleshooting
 
 - `ae_command.json` stays `pending`:
   - AE panel not open
@@ -196,7 +269,7 @@ List effect availability in current environment:
   - quote with single quotes:
     - `-AfterEffectsPath 'C:\Program Files\Adobe\Adobe After Effects 2025'`
 
-## Docs
+## 8. Docs
 
 - [Rust migration specification](docs/specification-rust-migration.md)
 - [Development stages](docs/development-stages.md)
@@ -207,6 +280,6 @@ List effect availability in current environment:
 - [Operations runbook](docs/operations-runbook.md)
 - [GA release checklist](docs/release-checklist.md)
 
-## License
+## 9. License
 
 This project is licensed under the MIT License. See [LICENSE](LICENSE).
