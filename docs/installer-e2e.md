@@ -51,11 +51,12 @@ REQUIRE_PKG=true ./scripts/package-macos.sh ./dist/macos
 
 ## 3.3 MCP + AE ブリッジ
 
-1. `mcp-bridge-auto.jsx` をAEに配置
-2. AEで `Window > mcp-bridge-auto.jsx` を開く
-3. `Auto-run commands` をON
-4. Codexで `run-script(script=listCompositions)` を実行
-5. `get-results` で結果JSON取得
+1. MSI/pkg で導入した場合、`mcp-bridge-auto.jsx` が検出済み AE に自動配置されることを確認
+2. ポータブル版（zip/tar.gz）の場合は `mcp-bridge-auto.jsx` を手動配置
+3. AEで `Window > mcp-bridge-auto.jsx` を開く
+4. `Auto-run commands` をON
+5. Codexで `run-script(script=listCompositions)` を実行
+6. `get-results` で結果JSON取得
 
 ## 4. 失敗時の確認ポイント
 
@@ -72,4 +73,3 @@ REQUIRE_PKG=true ./scripts/package-macos.sh ./dist/macos
 - 実行方法:
 1. `workflow_dispatch` で手動実行
 2. `v*` タグPushで自動実行
-

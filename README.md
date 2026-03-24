@@ -83,6 +83,9 @@ It communicates with AE through the `mcp-bridge-auto.jsx` panel and file bridge 
 - `serve-stdio` for MCP clients.
 - `serve-daemon` and `service` subcommands for OS-level service management.
 - Windows/macOS packaging scripts and CI workflows for installer artifacts.
+- Installer-based bridge deployment:
+  - `.msi` and `.pkg` automatically deploy `mcp-bridge-auto.jsx` to detected AE installations.
+  - portable archives (`.zip` / `.tar.gz`) include the bridge script for manual install.
 - Repository is now Rust-only (legacy npm/TypeScript server files were removed).
 
 ## 3. Setup
@@ -102,6 +105,10 @@ Download the latest release from [GitHub Releases](https://github.com/Aodaruma/a
 
 #### 3.1-B Install AE Bridge Panel
 
+If you installed with `.msi` (Windows) or `.pkg` (macOS), the installer automatically deploys `mcp-bridge-auto.jsx` to all detected After Effects installations.
+
+If you installed with portable `.zip` / `.tar.gz`, install the bridge panel manually:
+
 Download `mcp-bridge-auto.jsx` from:
 
 - `src/scripts/mcp-bridge-auto.jsx` in this repository, or
@@ -111,6 +118,11 @@ Then copy it to:
 
 - Windows: `C:\Program Files\Adobe\Adobe After Effects <YEAR>\Support Files\Scripts\ScriptUI Panels\`
 - macOS: `/Applications/Adobe After Effects <YEAR>/Scripts/ScriptUI Panels/`
+
+If AE was installed or updated after `.msi` / `.pkg` installation, run a manual bridge install once:
+
+- Windows: `powershell -ExecutionPolicy Bypass -File .\scripts\install-bridge.ps1`
+- macOS: `bash ./scripts/install-bridge.sh`
 
 #### 3.1-C Configure After Effects
 
@@ -261,6 +273,9 @@ List effect availability in current environment:
   - AE panel not open
   - `Auto-run commands` is OFF
   - panel not reloaded after script update
+- Installer completed but panel is not found in AE:
+  - restart AE and check `Window > mcp-bridge-auto.jsx`
+  - if still missing, run `install-bridge.ps1` / `install-bridge.sh` manually
 - `get-results` returns stale/waiting:
   - check `~/Documents/ae-mcp-bridge/ae_command.json` and `ae_mcp_result.json` timestamps
 - `service install` access denied on Windows:

@@ -83,6 +83,9 @@ Adobe After Effects 向けの Rust 製 MCP サーバーです。
 - `serve-stdio` で MCP クライアントと接続
 - `serve-daemon` / `service` で OS サービス運用
 - Windows/macOS のパッケージングスクリプトと CI ワークフローを用意
+- インストーラー経由のブリッジ自動配置
+  - `.msi` / `.pkg` は検出した AE へ `mcp-bridge-auto.jsx` を自動配置
+  - ポータブル版（`.zip` / `.tar.gz`）は同梱 jsx を手動配置
 - このリポジトリは Rust 一本化済み（npm/TypeScript サーバーは削除済み）
 
 ## 3. セットアップ
@@ -102,6 +105,10 @@ Adobe After Effects 向けの Rust 製 MCP サーバーです。
 
 #### 3.1-B AE ブリッジパネルを配置
 
+`.msi`（Windows）または `.pkg`（macOS）で導入した場合は、インストーラーが検出した After Effects へ `mcp-bridge-auto.jsx` を自動配置します。
+
+ポータブル版（`.zip` / `.tar.gz`）を使う場合は、以下の手順で手動配置してください。
+
 `mcp-bridge-auto.jsx` を以下のいずれかから取得し、配置します。
 
 - このリポジトリの `src/scripts/mcp-bridge-auto.jsx`
@@ -111,6 +118,11 @@ Adobe After Effects 向けの Rust 製 MCP サーバーです。
 
 - Windows: `C:\Program Files\Adobe\Adobe After Effects <YEAR>\Support Files\Scripts\ScriptUI Panels\`
 - macOS: `/Applications/Adobe After Effects <YEAR>/Scripts/ScriptUI Panels/`
+
+`.msi` / `.pkg` 導入後に AE を追加インストール・更新した場合は、1回だけ手動導入を実行してください。
+
+- Windows: `powershell -ExecutionPolicy Bypass -File .\scripts\install-bridge.ps1`
+- macOS: `bash ./scripts/install-bridge.sh`
 
 #### 3.1-C After Effects 側を設定
 
@@ -261,6 +273,9 @@ macOS では `.exe` を外してください。
   - AE パネル未起動
   - `Auto-run commands` が OFF
   - スクリプト更新後のパネル再読込漏れ
+- インストーラー導入後に AE でパネルが見つからない:
+  - AE再起動後に `Window > mcp-bridge-auto.jsx` を確認
+  - 見つからない場合は `install-bridge.ps1` / `install-bridge.sh` を手動実行
 - `get-results` が `waiting`/stale:
   - `~/Documents/ae-mcp-bridge/ae_command.json` と `ae_mcp_result.json` の更新時刻を確認
 - Windows で `service install` が Access Denied:
