@@ -29,12 +29,16 @@ if (-not $output) {
 
 Push-Location $repoRoot
 try {
-    Write-Host "Building release binary..."
-    cargo build --release -p ae-mcp
+    Write-Host "Building release binaries..."
+    cargo build --release -p ae-mcp -p pr-mcp
 
     $exePath = Join-Path $repoRoot "target\release\ae-mcp.exe"
     if (!(Test-Path $exePath)) {
         throw "Release binary not found: $exePath"
+    }
+    $prExePath = Join-Path $repoRoot "target\release\pr-mcp.exe"
+    if (!(Test-Path $prExePath)) {
+        throw "Release binary not found: $prExePath"
     }
     $bridgePanelPath = Join-Path $repoRoot "src\scripts\mcp-bridge-auto.jsx"
     if (!(Test-Path $bridgePanelPath)) {
@@ -52,6 +56,7 @@ try {
     $stageDir = Join-Path $output "stage"
     Ensure-Directory $stageDir
     Copy-Item $exePath (Join-Path $stageDir "ae-mcp.exe") -Force
+    Copy-Item $prExePath (Join-Path $stageDir "pr-mcp.exe") -Force
     Copy-Item $bridgePanelPath (Join-Path $stageDir "mcp-bridge-auto.jsx") -Force
     $premiereStageDir = Join-Path $stageDir "premiere-cep"
     Ensure-Directory $premiereStageDir
@@ -76,6 +81,7 @@ try {
     $wxsPath = Join-Path $output "ae-mcp.wxs"
     $msiPath = Join-Path $output "after-effects-mcp-rs-windows-x86_64.msi"
     $escapedExe = (Join-Path $stageDir "ae-mcp.exe").Replace("\", "\\")
+    $escapedPrExe = (Join-Path $stageDir "pr-mcp.exe").Replace("\", "\\")
     $escapedBridgePanel = (Join-Path $stageDir "mcp-bridge-auto.jsx").Replace("\", "\\")
     $escapedBridgeInstallerPs1 = (Join-Path $stageDir "install-bridge-installer.ps1").Replace("\", "\\")
     $premiereRoot = Join-Path $stageDir "premiere-cep\mcp-bridge-premiere"
@@ -98,6 +104,9 @@ try {
       <Directory Id="INSTALLFOLDER" Name="AfterEffectsMcp">
         <Component Id="AeMcpExeComponent" Guid="F94E8CF7-36DE-4E55-8FE5-C86069A6A4F9">
           <File Id="AeMcpExeFile" Source="$escapedExe" KeyPath="yes" />
+        </Component>
+        <Component Id="PrMcpExeComponent" Guid="E1E8E4F4-3D8C-4C8D-A44B-5D2BB9F5D311">
+          <File Id="PrMcpExeFile" Source="$escapedPrExe" KeyPath="yes" />
         </Component>
         <Component Id="BridgeAssetsComponent" Guid="6EFCE0CF-7EFD-4A28-9DF9-9A4B1A16F9D4">
           <File Id="BridgePanelFile" Source="$escapedBridgePanel" KeyPath="yes" />
@@ -143,6 +152,7 @@ try {
     </InstallExecuteSequence>
     <Feature Id="MainFeature" Title="After Effects MCP" Level="1">
       <ComponentRef Id="AeMcpExeComponent" />
+      <ComponentRef Id="PrMcpExeComponent" />
       <ComponentRef Id="BridgeAssetsComponent" />
       <ComponentRef Id="PremiereBridgeManifestComponent" />
       <ComponentRef Id="PremiereBridgeCssComponent" />

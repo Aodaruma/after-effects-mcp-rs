@@ -11,12 +11,17 @@ mkdir -p "$OUTPUT_DIR"
 
 pushd "$REPO_ROOT" >/dev/null
 
-echo "Building release binary..."
-cargo build --release -p ae-mcp
+echo "Building release binaries..."
+cargo build --release -p ae-mcp -p pr-mcp
 
-BIN_PATH="$REPO_ROOT/target/release/ae-mcp"
-if [[ ! -f "$BIN_PATH" ]]; then
-  echo "Release binary not found: $BIN_PATH" >&2
+BIN_PATH_AE="$REPO_ROOT/target/release/ae-mcp"
+if [[ ! -f "$BIN_PATH_AE" ]]; then
+  echo "Release binary not found: $BIN_PATH_AE" >&2
+  exit 1
+fi
+BIN_PATH_PR="$REPO_ROOT/target/release/pr-mcp"
+if [[ ! -f "$BIN_PATH_PR" ]]; then
+  echo "Release binary not found: $BIN_PATH_PR" >&2
   exit 1
 fi
 BRIDGE_PANEL_PATH="$REPO_ROOT/src/scripts/mcp-bridge-auto.jsx"
@@ -32,8 +37,10 @@ fi
 
 STAGE_DIR="$OUTPUT_DIR/stage"
 mkdir -p "$STAGE_DIR"
-cp "$BIN_PATH" "$STAGE_DIR/ae-mcp"
+cp "$BIN_PATH_AE" "$STAGE_DIR/ae-mcp"
 chmod +x "$STAGE_DIR/ae-mcp"
+cp "$BIN_PATH_PR" "$STAGE_DIR/pr-mcp"
+chmod +x "$STAGE_DIR/pr-mcp"
 cp "$BRIDGE_PANEL_PATH" "$STAGE_DIR/mcp-bridge-auto.jsx"
 mkdir -p "$STAGE_DIR/premiere-cep"
 cp -R "$PREMIERE_CEP_PATH" "$STAGE_DIR/premiere-cep/mcp-bridge-premiere"
@@ -59,6 +66,7 @@ INSTALL_SHARE_DIR="$PKG_ROOT/usr/local/share/ae-mcp"
 mkdir -p "$INSTALL_BIN_DIR"
 mkdir -p "$INSTALL_SHARE_DIR"
 cp "$STAGE_DIR/ae-mcp" "$INSTALL_BIN_DIR/ae-mcp"
+cp "$STAGE_DIR/pr-mcp" "$INSTALL_BIN_DIR/pr-mcp"
 cp "$STAGE_DIR/mcp-bridge-auto.jsx" "$INSTALL_SHARE_DIR/mcp-bridge-auto.jsx"
 mkdir -p "$INSTALL_SHARE_DIR/premiere-cep"
 cp -R "$STAGE_DIR/premiere-cep/mcp-bridge-premiere" "$INSTALL_SHARE_DIR/premiere-cep/mcp-bridge-premiere"

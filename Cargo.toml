@@ -4,6 +4,8 @@ members = [
     "crates/bridge-core",
     "crates/mcp-core",
     "crates/platform-service",
+    "crates/pr-core",
+    "crates/pr-mcp",
 ]
 resolver = "2"
 

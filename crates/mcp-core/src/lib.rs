@@ -79,14 +79,29 @@ impl AppConfig {
             Ok(Self::default())
         }
     }
+
+    pub fn load_with_bridge_paths(
+        config_path: Option<&Path>,
+        bridge: BridgePaths,
+    ) -> Result<Self> {
+        let mut cfg = Self::load(config_path)?;
+        if config_path.is_none() {
+            cfg.bridge = bridge;
+        }
+        Ok(cfg)
+    }
 }
 
 pub fn default_bridge_root_dir() -> PathBuf {
+    default_bridge_root_dir_named("ae-mcp-bridge")
+}
+
+pub fn default_bridge_root_dir_named(folder: &str) -> PathBuf {
     let home = std::env::var_os("USERPROFILE")
         .or_else(|| std::env::var_os("HOME"))
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("."));
-    home.join("Documents").join("ae-mcp-bridge")
+    home.join("Documents").join(folder)
 }
 
 pub fn is_allowed_script(script: &str) -> bool {

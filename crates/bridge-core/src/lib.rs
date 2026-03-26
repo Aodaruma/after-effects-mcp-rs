@@ -69,7 +69,7 @@ impl BridgeClient {
     pub fn clear_results_file(&self) -> Result<()> {
         let payload = WaitingResult {
             status: "waiting".to_string(),
-            message: "Waiting for new result from After Effects...".to_string(),
+            message: "Waiting for new result from the host application...".to_string(),
             timestamp: chrono_like_timestamp(),
         };
         write_json_file(&self.cfg.bridge.result_file, &payload)
@@ -88,7 +88,7 @@ impl BridgeClient {
         let path = &self.cfg.bridge.result_file;
         if !path.exists() {
             return Ok(json_text(&serde_json::json!({
-                "error": "No results file found. Please run a script in After Effects first."
+                "error": "No results file found. Please run a script in the host application first."
             }))?);
         }
 
@@ -104,7 +104,7 @@ impl BridgeClient {
             if age > stale_threshold {
                 return Ok(json_text(&serde_json::json!({
                     "warning": "Result file appears to be stale (not recently updated).",
-                    "message": "This could indicate After Effects is not properly writing results or the MCP Bridge Auto panel is not running.",
+                    "message": "This could indicate the host application is not properly writing results or the MCP Bridge panel is not running.",
                     "ageSeconds": age.as_secs(),
                     "originalContent": content
                 }))?);

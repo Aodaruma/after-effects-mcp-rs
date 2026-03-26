@@ -180,3 +180,282 @@ function ping(_args) {
         message: "ok"
     });
 }
+
+function mcpGetSequenceCollection() {
+    if (!app || !app.project) {
+        return null;
+    }
+    return app.project.sequences;
+}
+
+function mcpGetSequenceCount(sequences) {
+    if (!sequences) {
+        return 0;
+    }
+    if (typeof sequences.numSequences === "number") {
+        return sequences.numSequences;
+    }
+    if (typeof sequences.length === "number") {
+        return sequences.length;
+    }
+    return 0;
+}
+
+function mcpGetSequenceId(sequence) {
+    if (!sequence) {
+        return null;
+    }
+    try {
+        if (sequence.sequenceID !== undefined && sequence.sequenceID !== null) {
+            return sequence.sequenceID;
+        }
+    } catch (_e) {}
+    return null;
+}
+
+function mcpGetSequenceByIndex(index) {
+    var sequences = mcpGetSequenceCollection();
+    var count = mcpGetSequenceCount(sequences);
+    if (!sequences || count === 0 || index === null || index === undefined) {
+        return null;
+    }
+    var idxNumber = Number(index);
+    if (isNaN(idxNumber)) {
+        return null;
+    }
+    var oneBased = idxNumber - 1;
+    if (oneBased >= 0 && oneBased < count) {
+        return sequences[oneBased];
+    }
+    if (idxNumber >= 0 && idxNumber < count) {
+        return sequences[idxNumber];
+    }
+    return null;
+}
+
+function mcpFindSequenceByName(name) {
+    if (!name) {
+        return null;
+    }
+    var sequences = mcpGetSequenceCollection();
+    var count = mcpGetSequenceCount(sequences);
+    if (!sequences || count === 0) {
+        return null;
+    }
+    var needle = name.toLowerCase();
+    for (var i = 0; i < count; i++) {
+        var seq = sequences[i];
+        if (seq && seq.name && seq.name.toLowerCase() === needle) {
+            return seq;
+        }
+    }
+    return null;
+}
+
+function mcpFindSequenceIndex(target) {
+    var sequences = mcpGetSequenceCollection();
+    var count = mcpGetSequenceCount(sequences);
+    if (!sequences || count === 0 || !target) {
+        return null;
+    }
+    var targetId = mcpGetSequenceId(target);
+    for (var i = 0; i < count; i++) {
+        var seq = sequences[i];
+        if (!seq) {
+            continue;
+        }
+        if (seq === target) {
+            return i + 1;
+        }
+        var seqId = mcpGetSequenceId(seq);
+        if (targetId !== null && seqId !== null && seqId === targetId) {
+            return i + 1;
+        }
+    }
+    return null;
+}
+
+function mcpResolveSequence(args) {
+    args = args || {};
+    if (args.sequenceName) {
+        var byName = mcpFindSequenceByName(args.sequenceName);
+        if (byName) {
+            return byName;
+        }
+    }
+    if (args.sequenceIndex !== undefined && args.sequenceIndex !== null) {
+        var byIndex = mcpGetSequenceByIndex(args.sequenceIndex);
+        if (byIndex) {
+            return byIndex;
+        }
+    }
+    if (app && app.project) {
+        return app.project.activeSequence;
+    }
+    return null;
+}
+
+function listSequences(_args) {
+    var sequences = mcpGetSequenceCollection();
+    var count = mcpGetSequenceCount(sequences);
+    if (!sequences || count === 0) {
+        return JSON.stringify({
+            status: "error",
+            message: "No sequences found in the current project."
+        });
+    }
+
+    var items = [];
+    for (var i = 0; i < count; i++) {
+        var seq = sequences[i];
+        if (!seq) {
+            continue;
+        }
+        items.push({
+            index: i + 1,
+            name: seq.name || "",
+            id: mcpGetSequenceId(seq)
+        });
+    }
+
+    return JSON.stringify({
+        status: "success",
+        total: count,
+        sequences: items
+    });
+}
+
+function getActiveSequence(_args) {
+    if (!app || !app.project) {
+        return JSON.stringify({
+            status: "error",
+            message: "Premiere project is not available."
+        });
+    }
+    var seq = app.project.activeSequence;
+    if (!seq) {
+        return JSON.stringify({
+            status: "error",
+            message: "No active sequence."
+        });
+    }
+    var index = mcpFindSequenceIndex(seq);
+    return JSON.stringify({
+        status: "success",
+        sequence: {
+            name: seq.name || "",
+            index: index,
+            id: mcpGetSequenceId(seq)
+        }
+    });
+}
+
+function setPlayheadTime(args) {
+    args = args || {};
+    var seq = mcpResolveSequence(args);
+    if (!seq) {
+        return JSON.stringify({
+            status: "error",
+            message: "Sequence not found."
+        });
+    }
+
+    var timeTicks = null;
+    if (args.timeTicks !== undefined && args.timeTicks !== null) {
+        var ticks = Number(args.timeTicks);
+        if (!isNaN(ticks)) {
+            timeTicks = ticks;
+        }
+    }
+
+    var timeSeconds = null;
+    if (args.timeSeconds !== undefined && args.timeSeconds !== null) {
+        var seconds = Number(args.timeSeconds);
+        if (!isNaN(seconds)) {
+            timeSeconds = seconds;
+        }
+    }
+
+    if (timeTicks === null && timeSeconds === null) {
+        return JSON.stringify({
+            status: "error",
+            message: "timeSeconds or timeTicks is required."
+        });
+    }
+
+    if (timeTicks === null) {
+        var t = new Time();
+        t.seconds = timeSeconds;
+        timeTicks = t.ticks;
+    }
+
+    try {
+        seq.setPlayerPosition(timeTicks);
+    } catch (err) {
+        return JSON.stringify({
+            status: "error",
+            message: err.toString()
+        });
+    }
+
+    return JSON.stringify({
+        status: "success",
+        sequenceName: seq.name || "",
+        timeSeconds: timeSeconds,
+        timeTicks: timeTicks
+    });
+}
+
+function exportSequence(args) {
+    args = args || {};
+    var seq = mcpResolveSequence(args);
+    if (!seq) {
+        return JSON.stringify({
+            status: "error",
+            message: "Sequence not found."
+        });
+    }
+
+    var outputPath = args.outputPath;
+    if (!outputPath) {
+        return JSON.stringify({
+            status: "error",
+            message: "outputPath is required."
+        });
+    }
+
+    var presetPath = args.presetPath;
+    if (!presetPath) {
+        return JSON.stringify({
+            status: "error",
+            message: "presetPath is required."
+        });
+    }
+
+    var workAreaType = 0;
+    if (args.workAreaType !== undefined && args.workAreaType !== null) {
+        var workArea = Number(args.workAreaType);
+        if (!isNaN(workArea)) {
+            workAreaType = workArea;
+        }
+    }
+
+    var result = null;
+    try {
+        result = seq.exportAsMediaDirect(outputPath, presetPath, workAreaType);
+    } catch (err) {
+        return JSON.stringify({
+            status: "error",
+            message: err.toString()
+        });
+    }
+
+    return JSON.stringify({
+        status: "success",
+        result: result,
+        sequenceName: seq.name || "",
+        outputPath: outputPath,
+        presetPath: presetPath,
+        workAreaType: workAreaType
+    });
+}

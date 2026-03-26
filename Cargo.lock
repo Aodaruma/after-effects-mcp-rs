@@ -442,6 +442,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "pr-core"
+version = "0.1.0"
+dependencies = [
+ "mcp-core",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "pr-mcp"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bridge-core",
+ "clap",
+ "mcp-core",
+ "platform-service",
+ "pr-core",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "prettyplease"
 version = "0.2.37"
 source = "registry+https://github.com/rust-lang/crates.io-index"
