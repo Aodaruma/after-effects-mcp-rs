@@ -31,6 +31,26 @@ function Get-AeInstallPaths {
         ForEach-Object { $_.FullName })
 }
 
+function Get-PremiereInstallPaths {
+    $adobeRoot = "C:\Program Files\Adobe"
+    if (-not (Test-Path -LiteralPath $adobeRoot)) {
+        return @()
+    }
+
+    return @(Get-ChildItem -LiteralPath $adobeRoot -Directory |
+        Where-Object { $_.Name -match '^Adobe Premiere Pro (\d{4})$' } |
+        Sort-Object { [int]($_.Name -replace '^Adobe Premiere Pro ', '') } -Descending |
+        ForEach-Object { $_.FullName })
+}
+
+function Resolve-PremiereExtensionSource {
+    $candidate = Join-Path $PSScriptRoot "premiere-cep\mcp-bridge-premiere"
+    if (Test-Path -LiteralPath $candidate) {
+        return (Resolve-Path -LiteralPath $candidate).Path
+    }
+    return $null
+}
+
 $source = Resolve-BridgeScriptPath -InputPath $BridgeScriptPath
 $targets = Get-AeInstallPaths
 
@@ -57,3 +77,31 @@ foreach ($aePath in $targets) {
 }
 
 Write-Host "Bridge deployment completed. Installed to $installed location(s)."
+
+$premiereTargets = Get-PremiereInstallPaths
+$premiereSource = Resolve-PremiereExtensionSource
+if (-not $premiereSource) {
+    Write-Host "Premiere CEP extension not found. Skipped Premiere bridge deployment."
+    exit 0
+}
+
+if ($premiereTargets.Count -eq 0) {
+    Write-Host "No Adobe Premiere Pro installation was detected. Skipped Premiere bridge deployment."
+    exit 0
+}
+
+$cepRoot = "C:\Program Files (x86)\Common Files\Adobe\CEP\extensions"
+$premiereDest = Join-Path $cepRoot "mcp-bridge-premiere"
+
+try {
+    if (-not (Test-Path -LiteralPath $cepRoot)) {
+        New-Item -ItemType Directory -Path $cepRoot -Force | Out-Null
+    }
+    if (Test-Path -LiteralPath $premiereDest) {
+        Remove-Item -LiteralPath $premiereDest -Recurse -Force
+    }
+    Copy-Item -LiteralPath $premiereSource -Destination $premiereDest -Recurse -Force
+    Write-Host "Premiere bridge installed: $premiereDest"
+} catch {
+    Write-Warning "Failed to install Premiere bridge: $($_.Exception.Message)"
+}

@@ -108,6 +108,49 @@ function Get-DetectedAfterEffectsPaths {
     return $detected
 }
 
+function Get-DetectedPremierePaths {
+    $detected = @()
+    $possiblePaths = @(
+        "C:\Program Files\Adobe\Adobe Premiere Pro 2030",
+        "C:\Program Files\Adobe\Adobe Premiere Pro 2029",
+        "C:\Program Files\Adobe\Adobe Premiere Pro 2028",
+        "C:\Program Files\Adobe\Adobe Premiere Pro 2027",
+        "C:\Program Files\Adobe\Adobe Premiere Pro 2026",
+        "C:\Program Files\Adobe\Adobe Premiere Pro 2025",
+        "C:\Program Files\Adobe\Adobe Premiere Pro 2024"
+    )
+
+    foreach ($path in $possiblePaths) {
+        if (Test-Path -LiteralPath $path) {
+            $detected += $path
+        }
+    }
+
+    $adobeRoot = "C:\Program Files\Adobe"
+    if (Test-Path -LiteralPath $adobeRoot) {
+        $dynamicPaths = Get-ChildItem -LiteralPath $adobeRoot -Directory |
+            Where-Object { $_.Name -match '^Adobe Premiere Pro (\d{4})$' } |
+            Sort-Object { [int]($_.Name -replace '^Adobe Premiere Pro ', '') } -Descending |
+            ForEach-Object { $_.FullName }
+
+        foreach ($path in $dynamicPaths) {
+            if ($detected -notcontains $path) {
+                $detected += $path
+            }
+        }
+    }
+
+    return $detected
+}
+
+function Get-CepExtensionsRoot {
+    if (Test-IsAdministrator) {
+        return "C:\Program Files (x86)\Common Files\Adobe\CEP\extensions"
+    }
+    $appData = [Environment]::GetFolderPath("ApplicationData")
+    return (Join-Path $appData "Adobe\CEP\extensions")
+}
+
 function Resolve-InstallTargets {
     param([string]$PreferredPath)
 
@@ -185,3 +228,38 @@ Write-Host "2. Edit > Preferences > Scripting & Expressions"
 Write-Host "3. Enable Allow Scripts to Write Files and Access Network"
 Write-Host "4. Restart After Effects"
 Write-Host "5. Open Window > mcp-bridge-auto.jsx"
+
+$premiereExtensionSource = Join-Path $repoRoot "src\premiere\cep\mcp-bridge-premiere"
+if (Test-Path -LiteralPath $premiereExtensionSource) {
+    $premiereTargets = Get-DetectedPremierePaths
+    if ($premiereTargets.Count -eq 0) {
+        Write-Host ""
+        Write-Host "No Adobe Premiere Pro installation detected. Skipped Premiere bridge deployment."
+    } else {
+        $cepRoot = Get-CepExtensionsRoot
+        $premiereDest = Join-Path $cepRoot "mcp-bridge-premiere"
+        Write-Host ""
+        Write-Host "Premiere CEP destination: $premiereDest"
+        if ($DryRun) {
+            Write-Host "DryRun mode: Premiere bridge not installed."
+            exit 0
+        }
+
+        try {
+            if (!(Test-Path -LiteralPath $cepRoot)) {
+                New-Item -ItemType Directory -Path $cepRoot -Force | Out-Null
+            }
+            if (Test-Path -LiteralPath $premiereDest) {
+                Remove-Item -LiteralPath $premiereDest -Recurse -Force
+            }
+            Copy-Item -Path $premiereExtensionSource -Destination $premiereDest -Recurse -Force
+            Write-Host "Premiere bridge installed."
+            Write-Host "Next steps (Premiere Pro):"
+            Write-Host "1. Open Adobe Premiere Pro"
+            Write-Host "2. Window > Extensions > Premiere MCP Bridge"
+            Write-Host "3. Enable Auto-run commands"
+        } catch {
+            Write-Warning "Failed to install Premiere bridge: $($_.Exception.Message)"
+        }
+    }
+}

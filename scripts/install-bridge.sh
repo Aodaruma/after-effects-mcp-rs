@@ -4,6 +4,7 @@ set -euo pipefail
 AE_PATH=""
 DRY_RUN="false"
 AE_PATHS=()
+PREMIERE_PATHS=()
 
 add_unique_path() {
   local candidate="$1"
@@ -14,6 +15,17 @@ add_unique_path() {
     fi
   done
   AE_PATHS+=("$candidate")
+}
+
+add_unique_premiere_path() {
+  local candidate="$1"
+  local existing
+  for existing in "${PREMIERE_PATHS[@]}"; do
+    if [[ "$existing" == "$candidate" ]]; then
+      return
+    fi
+  done
+  PREMIERE_PATHS+=("$candidate")
 }
 
 while [[ $# -gt 0 ]]; do
@@ -80,43 +92,94 @@ else
 fi
 
 if [[ "${#AE_PATHS[@]}" -eq 0 ]]; then
-  echo "After Effects path not found. Use --ae-path <path>." >&2
-  exit 1
+  echo "After Effects path not found. Skipping AE bridge install."
+else
+  echo "Source      : $SOURCE_SCRIPT"
+  echo "Destinations:"
+  for ae in "${AE_PATHS[@]}"; do
+    echo "  - $ae/Scripts/ScriptUI Panels/mcp-bridge-auto.jsx"
+  done
 fi
-
-echo "Source      : $SOURCE_SCRIPT"
-echo "Destinations:"
-for ae in "${AE_PATHS[@]}"; do
-  echo "  - $ae/Scripts/ScriptUI Panels/mcp-bridge-auto.jsx"
-done
 
 if [[ "$DRY_RUN" == "true" ]]; then
   echo "Dry-run mode: no copy executed."
   exit 0
 fi
 
-for ae in "${AE_PATHS[@]}"; do
-  DEST_DIR="$ae/Scripts/ScriptUI Panels"
-  DEST_FILE="$DEST_DIR/mcp-bridge-auto.jsx"
+if [[ "${#AE_PATHS[@]}" -gt 0 ]]; then
+  for ae in "${AE_PATHS[@]}"; do
+    DEST_DIR="$ae/Scripts/ScriptUI Panels"
+    DEST_FILE="$DEST_DIR/mcp-bridge-auto.jsx"
 
-  if [[ -w "$ae" || ( -d "$DEST_DIR" && -w "$DEST_DIR" ) ]]; then
-    mkdir -p "$DEST_DIR"
-    cp "$SOURCE_SCRIPT" "$DEST_FILE"
+    if [[ -w "$ae" || ( -d "$DEST_DIR" && -w "$DEST_DIR" ) ]]; then
+      mkdir -p "$DEST_DIR"
+      cp "$SOURCE_SCRIPT" "$DEST_FILE"
+    else
+      echo "Destination may require sudo. Installing with sudo for: $ae"
+      sudo mkdir -p "$DEST_DIR"
+      sudo cp "$SOURCE_SCRIPT" "$DEST_FILE"
+    fi
+  done
+fi
+
+if [[ "${#AE_PATHS[@]}" -gt 0 ]]; then
+  echo
+  echo "Bridge script installed to ${#AE_PATHS[@]} location(s)."
+  for ae in "${AE_PATHS[@]}"; do
+    echo "  - $ae/Scripts/ScriptUI Panels/mcp-bridge-auto.jsx"
+  done
+  echo "Next steps:"
+  echo "1. Open After Effects"
+  echo "2. After Effects > Settings > Scripting & Expressions"
+  echo "3. Enable \"Allow Scripts to Write Files and Access Network\""
+  echo "4. Restart After Effects"
+  echo "5. Open Window > mcp-bridge-auto.jsx"
+fi
+
+PREMIERE_SOURCE="$REPO_ROOT/src/premiere/cep/mcp-bridge-premiere"
+if [[ -d "$PREMIERE_SOURCE" ]]; then
+  PREMIERE_CANDIDATES=(
+    "/Applications/Adobe Premiere Pro 2030"
+    "/Applications/Adobe Premiere Pro 2029"
+    "/Applications/Adobe Premiere Pro 2028"
+    "/Applications/Adobe Premiere Pro 2027"
+    "/Applications/Adobe Premiere Pro 2026"
+    "/Applications/Adobe Premiere Pro 2025"
+    "/Applications/Adobe Premiere Pro 2024"
+  )
+
+  for path in "${PREMIERE_CANDIDATES[@]}"; do
+    if [[ -d "$path" ]]; then
+      add_unique_premiere_path "$path"
+    fi
+  done
+
+  while IFS= read -r path; do
+    case "$path" in
+      /Applications/Adobe\ Premiere\ Pro\ [0-9][0-9][0-9][0-9])
+        add_unique_premiere_path "$path"
+        ;;
+    esac
+  done < <(find /Applications -maxdepth 1 -type d -name "Adobe Premiere Pro *" 2>/dev/null | sort -r)
+
+  if [[ "${#PREMIERE_PATHS[@]}" -eq 0 ]]; then
+    echo
+    echo "No Adobe Premiere Pro installation detected. Skipped Premiere bridge install."
   else
-    echo "Destination may require sudo. Installing with sudo for: $ae"
-    sudo mkdir -p "$DEST_DIR"
-    sudo cp "$SOURCE_SCRIPT" "$DEST_FILE"
+    if [[ "$(id -u)" -eq 0 ]]; then
+      CEP_ROOT="/Library/Application Support/Adobe/CEP/extensions"
+    else
+      CEP_ROOT="$HOME/Library/Application Support/Adobe/CEP/extensions"
+    fi
+    PREMIERE_DEST="$CEP_ROOT/mcp-bridge-premiere"
+    mkdir -p "$CEP_ROOT"
+    rm -rf "$PREMIERE_DEST"
+    cp -R "$PREMIERE_SOURCE" "$PREMIERE_DEST"
+    echo
+    echo "Premiere bridge installed: $PREMIERE_DEST"
+    echo "Next steps (Premiere Pro):"
+    echo "1. Open Adobe Premiere Pro"
+    echo "2. Window > Extensions > Premiere MCP Bridge"
+    echo "3. Enable Auto-run commands"
   fi
-done
-
-echo
-echo "Bridge script installed to ${#AE_PATHS[@]} location(s)."
-for ae in "${AE_PATHS[@]}"; do
-  echo "  - $ae/Scripts/ScriptUI Panels/mcp-bridge-auto.jsx"
-done
-echo "Next steps:"
-echo "1. Open After Effects"
-echo "2. After Effects > Settings > Scripting & Expressions"
-echo "3. Enable \"Allow Scripts to Write Files and Access Network\""
-echo "4. Restart After Effects"
-echo "5. Open Window > mcp-bridge-auto.jsx"
+fi

@@ -40,6 +40,10 @@ try {
     if (!(Test-Path $bridgePanelPath)) {
         throw "Bridge panel script not found: $bridgePanelPath"
     }
+    $premiereCepPath = Join-Path $repoRoot "src\premiere\cep\mcp-bridge-premiere"
+    if (!(Test-Path $premiereCepPath)) {
+        throw "Premiere CEP bridge not found: $premiereCepPath"
+    }
     $installerBridgeScriptPath = Join-Path $repoRoot "scripts\install-bridge-installer.ps1"
     if (!(Test-Path $installerBridgeScriptPath)) {
         throw "Installer bridge deployment script not found: $installerBridgeScriptPath"
@@ -49,6 +53,9 @@ try {
     Ensure-Directory $stageDir
     Copy-Item $exePath (Join-Path $stageDir "ae-mcp.exe") -Force
     Copy-Item $bridgePanelPath (Join-Path $stageDir "mcp-bridge-auto.jsx") -Force
+    $premiereStageDir = Join-Path $stageDir "premiere-cep"
+    Ensure-Directory $premiereStageDir
+    Copy-Item $premiereCepPath (Join-Path $premiereStageDir "mcp-bridge-premiere") -Recurse -Force
     Copy-Item $installerBridgeScriptPath (Join-Path $stageDir "install-bridge-installer.ps1") -Force
 
     $zipPath = Join-Path $output "after-effects-mcp-rs-windows-x86_64.zip"
@@ -71,6 +78,12 @@ try {
     $escapedExe = (Join-Path $stageDir "ae-mcp.exe").Replace("\", "\\")
     $escapedBridgePanel = (Join-Path $stageDir "mcp-bridge-auto.jsx").Replace("\", "\\")
     $escapedBridgeInstallerPs1 = (Join-Path $stageDir "install-bridge-installer.ps1").Replace("\", "\\")
+    $premiereRoot = Join-Path $stageDir "premiere-cep\mcp-bridge-premiere"
+    $escapedPremiereManifest = (Join-Path $premiereRoot "CSXS\manifest.xml").Replace("\", "\\")
+    $escapedPremiereIndex = (Join-Path $premiereRoot "index.html").Replace("\", "\\")
+    $escapedPremiereCss = (Join-Path $premiereRoot "css\styles.css").Replace("\", "\\")
+    $escapedPremiereJs = (Join-Path $premiereRoot "js\main.js").Replace("\", "\\")
+    $escapedPremiereJsx = (Join-Path $premiereRoot "jsx\bridge.jsx").Replace("\", "\\")
 
     @"
 <?xml version="1.0" encoding="UTF-8"?>
@@ -90,6 +103,33 @@ try {
           <File Id="BridgePanelFile" Source="$escapedBridgePanel" KeyPath="yes" />
           <File Id="BridgeInstallerScriptFile" Source="$escapedBridgeInstallerPs1" />
         </Component>
+        <Directory Id="PremiereCepRoot" Name="premiere-cep">
+          <Directory Id="PremiereCepExtension" Name="mcp-bridge-premiere">
+            <Directory Id="PremiereCepCsxs" Name="CSXS">
+              <Component Id="PremiereBridgeManifestComponent" Guid="B6F8D17F-1D0E-42B8-B13E-17F6C8D4E5B1">
+                <File Id="PremiereBridgeManifestFile" Source="$escapedPremiereManifest" KeyPath="yes" />
+              </Component>
+            </Directory>
+            <Directory Id="PremiereCepCss" Name="css">
+              <Component Id="PremiereBridgeCssComponent" Guid="D8C77E1B-9D3E-4D74-91E7-98A9D1F9B8B1">
+                <File Id="PremiereBridgeCssFile" Source="$escapedPremiereCss" KeyPath="yes" />
+              </Component>
+            </Directory>
+            <Directory Id="PremiereCepJs" Name="js">
+              <Component Id="PremiereBridgeJsComponent" Guid="0E5C32E5-5E2B-4AF0-A3C2-7BE2C2B6A6E7">
+                <File Id="PremiereBridgeJsFile" Source="$escapedPremiereJs" KeyPath="yes" />
+              </Component>
+            </Directory>
+            <Directory Id="PremiereCepJsx" Name="jsx">
+              <Component Id="PremiereBridgeJsxComponent" Guid="A7E7F6A2-52A9-4E9A-8B1F-9F7855DD6F4B">
+                <File Id="PremiereBridgeJsxFile" Source="$escapedPremiereJsx" KeyPath="yes" />
+              </Component>
+            </Directory>
+            <Component Id="PremiereBridgeIndexComponent" Guid="5D1D4F77-98D5-4A6B-9F93-3D60B610B1F0">
+              <File Id="PremiereBridgeIndexFile" Source="$escapedPremiereIndex" KeyPath="yes" />
+            </Component>
+          </Directory>
+        </Directory>
       </Directory>
     </StandardDirectory>
     <CustomAction Id="InstallAeBridgePanels"
@@ -104,6 +144,11 @@ try {
     <Feature Id="MainFeature" Title="After Effects MCP" Level="1">
       <ComponentRef Id="AeMcpExeComponent" />
       <ComponentRef Id="BridgeAssetsComponent" />
+      <ComponentRef Id="PremiereBridgeManifestComponent" />
+      <ComponentRef Id="PremiereBridgeCssComponent" />
+      <ComponentRef Id="PremiereBridgeJsComponent" />
+      <ComponentRef Id="PremiereBridgeJsxComponent" />
+      <ComponentRef Id="PremiereBridgeIndexComponent" />
     </Feature>
   </Package>
 </Wix>

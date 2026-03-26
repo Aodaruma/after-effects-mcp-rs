@@ -19,6 +19,16 @@ pub const ALLOWED_SCRIPTS: &[&str] = &[
     "applyEffectTemplate",
     "listSupportedEffects",
     "describeEffect",
+    "saveFramePng",
+    "renderQueueAdd",
+    "renderQueueStatus",
+    "setCurrentTime",
+    "getCurrentTime",
+    "setWorkArea",
+    "getWorkArea",
+    "cleanupPreviewFolder",
+    "setSuppressDialogs",
+    "getSuppressDialogs",
     "test-animation",
     "bridgeTestEffects",
 ];
@@ -286,6 +296,141 @@ pub fn tool_specs() -> Vec<ToolSpec> {
             }),
         },
         ToolSpec {
+            name: "save-frame-png",
+            description: "Save a single frame from a composition as PNG without using the render queue",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "compId": { "type": "integer", "minimum": 1 },
+                    "compIndex": { "type": "integer", "minimum": 1 },
+                    "compName": { "type": "string" },
+                    "timeSeconds": { "type": "number", "minimum": 0 },
+                    "outputPath": { "type": "string" },
+                    "overwrite": { "type": "boolean" },
+                    "suppressDialogs": { "type": "boolean" }
+                },
+                "required": ["outputPath"]
+            }),
+        },
+        ToolSpec {
+            name: "render-queue-add",
+            description: "Add a composition to the render queue without starting the render",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "compId": { "type": "integer", "minimum": 1 },
+                    "compIndex": { "type": "integer", "minimum": 1 },
+                    "compName": { "type": "string" },
+                    "outputPath": { "type": "string" },
+                    "renderSettingsTemplate": { "type": "string" },
+                    "outputModuleTemplate": { "type": "string" },
+                    "timeSpanStart": { "type": "number", "minimum": 0 },
+                    "timeSpanDuration": { "type": "number", "minimum": 0 },
+                    "suppressDialogs": { "type": "boolean" }
+                },
+                "required": ["outputPath"]
+            }),
+        },
+        ToolSpec {
+            name: "render-queue-status",
+            description: "Get status information for a render queue item",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "queueIndex": { "type": "integer", "minimum": 1 }
+                },
+                "required": ["queueIndex"]
+            }),
+        },
+        ToolSpec {
+            name: "set-current-time",
+            description: "Set the current time indicator for a composition",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "compId": { "type": "integer", "minimum": 1 },
+                    "compIndex": { "type": "integer", "minimum": 1 },
+                    "compName": { "type": "string" },
+                    "timeSeconds": { "type": "number", "minimum": 0 },
+                    "suppressDialogs": { "type": "boolean" }
+                },
+                "required": ["timeSeconds"]
+            }),
+        },
+        ToolSpec {
+            name: "get-current-time",
+            description: "Get the current time indicator for a composition",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "compId": { "type": "integer", "minimum": 1 },
+                    "compIndex": { "type": "integer", "minimum": 1 },
+                    "compName": { "type": "string" }
+                }
+            }),
+        },
+        ToolSpec {
+            name: "set-work-area",
+            description: "Set the work area start and duration for a composition",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "compId": { "type": "integer", "minimum": 1 },
+                    "compIndex": { "type": "integer", "minimum": 1 },
+                    "compName": { "type": "string" },
+                    "workAreaStart": { "type": "number", "minimum": 0 },
+                    "workAreaDuration": { "type": "number", "minimum": 0 },
+                    "suppressDialogs": { "type": "boolean" }
+                },
+                "required": ["workAreaStart", "workAreaDuration"]
+            }),
+        },
+        ToolSpec {
+            name: "get-work-area",
+            description: "Get the work area start and duration for a composition",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "compId": { "type": "integer", "minimum": 1 },
+                    "compIndex": { "type": "integer", "minimum": 1 },
+                    "compName": { "type": "string" }
+                }
+            }),
+        },
+        ToolSpec {
+            name: "cleanup-preview-folder",
+            description: "Delete preview PNG files from a folder",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "folderPath": { "type": "string" },
+                    "extension": { "type": "string" },
+                    "prefix": { "type": "string" },
+                    "maxAgeSeconds": { "type": "number", "minimum": 0 }
+                },
+                "required": ["folderPath"]
+            }),
+        },
+        ToolSpec {
+            name: "set-suppress-dialogs",
+            description: "Enable or disable dialog suppression in After Effects",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "enabled": { "type": "boolean" }
+                },
+                "required": ["enabled"]
+            }),
+        },
+        ToolSpec {
+            name: "get-suppress-dialogs",
+            description: "Get current dialog suppression state in After Effects",
+            input_schema: json!({
+                "type": "object",
+                "properties": {}
+            }),
+        },
+        ToolSpec {
             name: "mcp_aftereffects_applyEffect",
             description: "Apply an effect to a layer in After Effects",
             input_schema: json!({
@@ -408,6 +553,79 @@ pub fn prompt_specs() -> Vec<PromptSpec> {
             description: "Create a new composition with custom settings",
             arguments: vec![],
         },
+        PromptSpec {
+            name: "save-preview-png",
+            description: "Save a single-frame PNG preview from a composition",
+            arguments: vec![
+                PromptArgument {
+                    name: "compositionName",
+                    description: "Name of the composition to preview (optional if active comp)",
+                    required: false,
+                },
+                PromptArgument {
+                    name: "timeSeconds",
+                    description: "Time in seconds for the preview frame (optional)",
+                    required: false,
+                },
+                PromptArgument {
+                    name: "outputPath",
+                    description: "Absolute path for the PNG file to write",
+                    required: true,
+                },
+            ],
+        },
+        PromptSpec {
+            name: "render-queue-setup",
+            description: "Add a composition to the render queue without starting the render",
+            arguments: vec![
+                PromptArgument {
+                    name: "compositionName",
+                    description: "Name of the composition to render (optional if active comp)",
+                    required: false,
+                },
+                PromptArgument {
+                    name: "outputPath",
+                    description: "Absolute path for the output file",
+                    required: true,
+                },
+                PromptArgument {
+                    name: "renderSettingsTemplate",
+                    description: "Render settings template name (optional)",
+                    required: false,
+                },
+                PromptArgument {
+                    name: "outputModuleTemplate",
+                    description: "Output module template name (optional)",
+                    required: false,
+                },
+            ],
+        },
+        PromptSpec {
+            name: "cleanup-preview-folder",
+            description: "Delete preview PNG files in a folder",
+            arguments: vec![
+                PromptArgument {
+                    name: "folderPath",
+                    description: "Absolute path to the preview folder",
+                    required: true,
+                },
+                PromptArgument {
+                    name: "extension",
+                    description: "File extension to target (default: png)",
+                    required: false,
+                },
+                PromptArgument {
+                    name: "prefix",
+                    description: "Filename prefix to filter (optional)",
+                    required: false,
+                },
+                PromptArgument {
+                    name: "maxAgeSeconds",
+                    description: "Only delete files older than this many seconds (optional)",
+                    required: false,
+                },
+            ],
+        },
     ]
 }
 
@@ -427,6 +645,67 @@ pub fn prompt_messages(name: &str, args: &Value) -> Option<Value> {
         }
         "create-composition" => {
             "Please create a new composition with custom settings. You can specify parameters like name, width, height, frame rate, etc.".to_string()
+        }
+        "save-preview-png" => {
+            let composition_name = args
+                .get("compositionName")
+                .and_then(Value::as_str)
+                .unwrap_or("Active Composition");
+            let output_path = args
+                .get("outputPath")
+                .and_then(Value::as_str)
+                .unwrap_or("<ABSOLUTE_OUTPUT_PATH>");
+            let time_seconds = args
+                .get("timeSeconds")
+                .and_then(Value::as_f64)
+                .map(|v| v.to_string())
+                .unwrap_or("current time".to_string());
+            format!(
+                "Please save a single-frame PNG preview using the save-frame-png tool.\nComposition: {composition_name}\nTime: {time_seconds}\nOutput path: {output_path}\nRemember: outputPath is required, and after queueing call get-results."
+            )
+        }
+        "render-queue-setup" => {
+            let composition_name = args
+                .get("compositionName")
+                .and_then(Value::as_str)
+                .unwrap_or("Active Composition");
+            let output_path = args
+                .get("outputPath")
+                .and_then(Value::as_str)
+                .unwrap_or("<ABSOLUTE_OUTPUT_PATH>");
+            let render_template = args
+                .get("renderSettingsTemplate")
+                .and_then(Value::as_str)
+                .unwrap_or("(default)");
+            let output_template = args
+                .get("outputModuleTemplate")
+                .and_then(Value::as_str)
+                .unwrap_or("(default)");
+            format!(
+                "Please add a render queue item using the render-queue-add tool.\nComposition: {composition_name}\nOutput path: {output_path}\nRender settings template: {render_template}\nOutput module template: {output_template}\nDo not start rendering automatically. After queueing, call get-results."
+            )
+        }
+        "cleanup-preview-folder" => {
+            let folder_path = args
+                .get("folderPath")
+                .and_then(Value::as_str)
+                .unwrap_or("<ABSOLUTE_FOLDER_PATH>");
+            let extension = args
+                .get("extension")
+                .and_then(Value::as_str)
+                .unwrap_or("png");
+            let prefix = args
+                .get("prefix")
+                .and_then(Value::as_str)
+                .unwrap_or("(none)");
+            let max_age = args
+                .get("maxAgeSeconds")
+                .and_then(Value::as_f64)
+                .map(|v| v.to_string())
+                .unwrap_or("(none)".to_string());
+            format!(
+                "Please clean up preview files using the cleanup-preview-folder tool.\nFolder: {folder_path}\nExtension: {extension}\nPrefix: {prefix}\nMax age (seconds): {max_age}\nAfter queueing, call get-results."
+            )
         }
         _ => return None,
     };
@@ -455,6 +734,14 @@ To use this integration with After Effects, follow these steps:
 4. Enable "Auto-run commands"
 5. Use tools from MCP client and read back results
 
+Best practices:
+- Prefer compId/layerId when available to avoid index drift
+- Call get-results after queuing any tool command
+- save-frame-png is optimized for fast previews (single PNG only)
+- render-queue-add only queues; start rendering manually in After Effects
+- Use suppressDialogs (default true) to avoid blocking dialogs
+- Ensure outputPath points to a writable location
+
 Available scripts:
 - getProjectInfo
 - listCompositions
@@ -470,6 +757,16 @@ Available scripts:
 - applyEffectTemplate
 - listSupportedEffects
 - describeEffect
+- saveFramePng
+- renderQueueAdd
+- renderQueueStatus
+- setCurrentTime
+- getCurrentTime
+- setWorkArea
+- getWorkArea
+- cleanupPreviewFolder
+- setSuppressDialogs
+- getSuppressDialogs
 "#
 }
 

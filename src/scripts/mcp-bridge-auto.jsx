@@ -11,6 +11,7 @@
 */
 
 // --- Function Definitions ---
+var fxDialogsSuppressed = false;
 
 // --- createComposition (from createComposition.jsx) --- 
 function createComposition(args) {
@@ -479,6 +480,64 @@ function fxHasOwnEntries(obj) {
         }
     }
     return false;
+}
+
+function fxGetBooleanArg(args, key, defaultValue) {
+    if (!args || args[key] === undefined || args[key] === null) {
+        return defaultValue === true;
+    }
+    return args[key] === true;
+}
+
+function fxGetNumberArg(value, fallback) {
+    if (value === undefined || value === null || value === "") {
+        return fallback;
+    }
+    var parsed = parseFloat(value);
+    if (isNaN(parsed)) {
+        return fallback;
+    }
+    return parsed;
+}
+
+function fxEnsureParentFolder(file) {
+    if (!file || !file.parent) {
+        return;
+    }
+    if (!file.parent.exists) {
+        file.parent.create();
+    }
+}
+
+function fxSetSuppressDialogs(enabled) {
+    if (enabled) {
+        if (!fxDialogsSuppressed) {
+            app.beginSuppressDialogs();
+            fxDialogsSuppressed = true;
+        }
+    } else {
+        if (fxDialogsSuppressed) {
+            app.endSuppressDialogs();
+            fxDialogsSuppressed = false;
+        }
+    }
+}
+
+function fxWithSuppressDialogs(enabled, fn) {
+    var shouldSet = (enabled === true || enabled === false);
+    var previous = fxDialogsSuppressed;
+    if (shouldSet) {
+        fxSetSuppressDialogs(enabled === true);
+    }
+    var result;
+    try {
+        result = fn();
+    } finally {
+        if (shouldSet) {
+            fxSetSuppressDialogs(previous);
+        }
+    }
+    return result;
 }
 
 function fxParseNumericId(value) {
@@ -1287,6 +1346,400 @@ function describeEffect(args) {
     }
 }
 
+function fxResolveRenderQueueItem(queueIndex) {
+    var rq = app.project.renderQueue;
+    if (!rq) {
+        throw new Error("Render queue is not available");
+    }
+    var index = parseInt(queueIndex, 10);
+    if (isNaN(index) || index < 1) {
+        throw new Error("queueIndex must be a positive integer");
+    }
+    var item = null;
+    try {
+        if (rq.item) {
+            item = rq.item(index);
+        }
+    } catch (_e) {}
+    if (!item && rq.items) {
+        try {
+            item = rq.items[index];
+        } catch (_e2) {}
+        if (!item && index > 0) {
+            try {
+                item = rq.items[index - 1];
+            } catch (_e3) {}
+        }
+    }
+    if (!item) {
+        throw new Error("Render queue item not found at index " + index);
+    }
+    return item;
+}
+
+function saveFramePng(args) {
+    try {
+        var options = args || {};
+        var outputPath = options.outputPath;
+        if (!outputPath) {
+            throw new Error("outputPath is required");
+        }
+        var comp = fxResolveComposition(options);
+        var timeSeconds = fxGetNumberArg(options.timeSeconds, comp.time);
+        var overwrite = fxGetBooleanArg(options, "overwrite", true);
+        var suppressDialogs = fxGetBooleanArg(options, "suppressDialogs", true);
+
+        return fxWithSuppressDialogs(suppressDialogs, function () {
+            var file = new File(outputPath);
+            fxEnsureParentFolder(file);
+            if (file.exists) {
+                if (!overwrite) {
+                    throw new Error("output file already exists");
+                }
+                if (!file.remove()) {
+                    throw new Error("failed to remove existing file");
+                }
+            }
+            comp.saveFrameToPng(timeSeconds, file);
+            return JSON.stringify({
+                status: "success",
+                composition: {
+                    id: fxGetCompId(comp),
+                    name: comp.name
+                },
+                timeSeconds: timeSeconds,
+                outputPath: file.fsName,
+                fileExists: file.exists === true
+            }, null, 2);
+        });
+    } catch (error) {
+        return JSON.stringify({
+            status: "error",
+            message: error.toString()
+        }, null, 2);
+    }
+}
+
+function renderQueueAdd(args) {
+    try {
+        var options = args || {};
+        var outputPath = options.outputPath;
+        if (!outputPath) {
+            throw new Error("outputPath is required");
+        }
+        var comp = fxResolveComposition(options);
+        var suppressDialogs = fxGetBooleanArg(options, "suppressDialogs", true);
+
+        return fxWithSuppressDialogs(suppressDialogs, function () {
+            var rqItem = app.project.renderQueue.items.add(comp);
+            var renderSettingsTemplate = options.renderSettingsTemplate;
+            if (renderSettingsTemplate && renderSettingsTemplate !== "") {
+                rqItem.applyTemplate(renderSettingsTemplate);
+            }
+            var timeSpanStart = fxGetNumberArg(options.timeSpanStart, null);
+            if (timeSpanStart !== null) {
+                rqItem.timeSpanStart = timeSpanStart;
+            }
+            var timeSpanDuration = fxGetNumberArg(options.timeSpanDuration, null);
+            if (timeSpanDuration !== null) {
+                rqItem.timeSpanDuration = timeSpanDuration;
+            }
+            var outputModule = rqItem.outputModule(1);
+            var outputModuleTemplate = options.outputModuleTemplate;
+            if (outputModuleTemplate && outputModuleTemplate !== "") {
+                outputModule.applyTemplate(outputModuleTemplate);
+            }
+            var file = new File(outputPath);
+            fxEnsureParentFolder(file);
+            outputModule.file = file;
+
+            var queueIndex = (rqItem.index !== undefined && rqItem.index !== null)
+                ? rqItem.index
+                : app.project.renderQueue.numItems;
+
+            return JSON.stringify({
+                status: "success",
+                composition: {
+                    id: fxGetCompId(comp),
+                    name: comp.name
+                },
+                queueIndex: queueIndex,
+                outputPath: file.fsName,
+                renderSettingsTemplate: renderSettingsTemplate || null,
+                outputModuleTemplate: outputModuleTemplate || null
+            }, null, 2);
+        });
+    } catch (error) {
+        return JSON.stringify({
+            status: "error",
+            message: error.toString()
+        }, null, 2);
+    }
+}
+
+function renderQueueStatus(args) {
+    try {
+        var options = args || {};
+        var queueIndex = options.queueIndex;
+        if (queueIndex === undefined || queueIndex === null) {
+            throw new Error("queueIndex is required");
+        }
+        var item = fxResolveRenderQueueItem(queueIndex);
+        var outputPath = null;
+        try {
+            var om = item.outputModule(1);
+            if (om && om.file) {
+                outputPath = om.file.fsName;
+            }
+        } catch (_omErr) {}
+        var compInfo = null;
+        try {
+            if (item.comp) {
+                compInfo = {
+                    id: fxGetCompId(item.comp),
+                    name: item.comp.name
+                };
+            }
+        } catch (_compErr) {}
+        var statusValue = null;
+        try {
+            statusValue = item.status;
+        } catch (_statusErr) {}
+        var elapsedSeconds = null;
+        try {
+            elapsedSeconds = item.elapsedSeconds;
+        } catch (_elapsedErr) {}
+        var startTime = null;
+        try {
+            if (item.startTime) {
+                startTime = item.startTime.toString();
+            }
+        } catch (_startErr) {}
+        var endTime = null;
+        try {
+            if (item.endTime) {
+                endTime = item.endTime.toString();
+            }
+        } catch (_endErr) {}
+        var renderEnabled = null;
+        try {
+            renderEnabled = item.render;
+        } catch (_renderErr) {}
+
+        return JSON.stringify({
+            status: "success",
+            queueIndex: parseInt(queueIndex, 10),
+            renderStatus: statusValue,
+            elapsedSeconds: elapsedSeconds,
+            startTime: startTime,
+            endTime: endTime,
+            render: renderEnabled,
+            composition: compInfo,
+            outputPath: outputPath
+        }, null, 2);
+    } catch (error) {
+        return JSON.stringify({
+            status: "error",
+            message: error.toString()
+        }, null, 2);
+    }
+}
+
+function setCurrentTime(args) {
+    try {
+        var options = args || {};
+        var timeSeconds = fxGetNumberArg(options.timeSeconds, null);
+        if (timeSeconds === null) {
+            throw new Error("timeSeconds is required");
+        }
+        var comp = fxResolveComposition(options);
+        var suppressDialogs = fxGetBooleanArg(options, "suppressDialogs", true);
+
+        return fxWithSuppressDialogs(suppressDialogs, function () {
+            comp.time = timeSeconds;
+            return JSON.stringify({
+                status: "success",
+                composition: {
+                    id: fxGetCompId(comp),
+                    name: comp.name
+                },
+                timeSeconds: comp.time
+            }, null, 2);
+        });
+    } catch (error) {
+        return JSON.stringify({
+            status: "error",
+            message: error.toString()
+        }, null, 2);
+    }
+}
+
+function getCurrentTime(args) {
+    try {
+        var options = args || {};
+        var comp = fxResolveComposition(options);
+        return JSON.stringify({
+            status: "success",
+            composition: {
+                id: fxGetCompId(comp),
+                name: comp.name
+            },
+            timeSeconds: comp.time
+        }, null, 2);
+    } catch (error) {
+        return JSON.stringify({
+            status: "error",
+            message: error.toString()
+        }, null, 2);
+    }
+}
+
+function setWorkArea(args) {
+    try {
+        var options = args || {};
+        var workAreaStart = fxGetNumberArg(options.workAreaStart, null);
+        var workAreaDuration = fxGetNumberArg(options.workAreaDuration, null);
+        if (workAreaStart === null || workAreaDuration === null) {
+            throw new Error("workAreaStart and workAreaDuration are required");
+        }
+        var comp = fxResolveComposition(options);
+        var suppressDialogs = fxGetBooleanArg(options, "suppressDialogs", true);
+
+        return fxWithSuppressDialogs(suppressDialogs, function () {
+            comp.workAreaStart = workAreaStart;
+            comp.workAreaDuration = workAreaDuration;
+            return JSON.stringify({
+                status: "success",
+                composition: {
+                    id: fxGetCompId(comp),
+                    name: comp.name
+                },
+                workAreaStart: comp.workAreaStart,
+                workAreaDuration: comp.workAreaDuration
+            }, null, 2);
+        });
+    } catch (error) {
+        return JSON.stringify({
+            status: "error",
+            message: error.toString()
+        }, null, 2);
+    }
+}
+
+function getWorkArea(args) {
+    try {
+        var options = args || {};
+        var comp = fxResolveComposition(options);
+        return JSON.stringify({
+            status: "success",
+            composition: {
+                id: fxGetCompId(comp),
+                name: comp.name
+            },
+            workAreaStart: comp.workAreaStart,
+            workAreaDuration: comp.workAreaDuration
+        }, null, 2);
+    } catch (error) {
+        return JSON.stringify({
+            status: "error",
+            message: error.toString()
+        }, null, 2);
+    }
+}
+
+function cleanupPreviewFolder(args) {
+    try {
+        var options = args || {};
+        var folderPath = options.folderPath;
+        if (!folderPath) {
+            throw new Error("folderPath is required");
+        }
+        var extension = options.extension || "png";
+        extension = extension.toLowerCase();
+        if (extension.charAt(0) === ".") {
+            extension = extension.substring(1);
+        }
+        var prefix = options.prefix;
+        var maxAgeSeconds = fxGetNumberArg(options.maxAgeSeconds, null);
+
+        var folder = new Folder(folderPath);
+        if (!folder.exists) {
+            return JSON.stringify({
+                status: "success",
+                folderPath: folder.fsName || folderPath,
+                removedCount: 0,
+                removed: [],
+                message: "Folder does not exist"
+            }, null, 2);
+        }
+
+        var now = new Date().getTime();
+        var removed = [];
+        var files = folder.getFiles();
+        for (var i = 0; i < files.length; i++) {
+            var file = files[i];
+            if (!(file instanceof File)) {
+                continue;
+            }
+            var lowerName = file.name.toLowerCase();
+            if (extension) {
+                var dotIndex = lowerName.lastIndexOf(".");
+                var ext = (dotIndex >= 0) ? lowerName.substring(dotIndex + 1) : "";
+                if (ext !== extension) {
+                    continue;
+                }
+            }
+            if (prefix && file.name.indexOf(prefix) !== 0) {
+                continue;
+            }
+            if (maxAgeSeconds !== null && file.modified) {
+                var ageSeconds = (now - file.modified.getTime()) / 1000;
+                if (ageSeconds < maxAgeSeconds) {
+                    continue;
+                }
+            }
+            if (file.remove()) {
+                removed.push(file.name);
+            }
+        }
+
+        return JSON.stringify({
+            status: "success",
+            folderPath: folder.fsName,
+            removedCount: removed.length,
+            removed: removed
+        }, null, 2);
+    } catch (error) {
+        return JSON.stringify({
+            status: "error",
+            message: error.toString()
+        }, null, 2);
+    }
+}
+
+function setSuppressDialogs(args) {
+    try {
+        var enabled = args && args.enabled === true;
+        fxSetSuppressDialogs(enabled);
+        return JSON.stringify({
+            status: "success",
+            enabled: fxDialogsSuppressed
+        }, null, 2);
+    } catch (error) {
+        return JSON.stringify({
+            status: "error",
+            message: error.toString()
+        }, null, 2);
+    }
+}
+
+function getSuppressDialogs() {
+    return JSON.stringify({
+        status: "success",
+        enabled: fxDialogsSuppressed
+    }, null, 2);
+}
+
 // --- End of Function Definitions ---
 
 // --- Bridge test function to verify communication and effects application ---
@@ -1758,6 +2211,56 @@ function executeCommand(command, args) {
                 logToPanel("Calling describeEffect function...");
                 result = describeEffect(args);
                 logToPanel("Returned from describeEffect.");
+                break;
+            case "saveFramePng":
+                logToPanel("Calling saveFramePng function...");
+                result = saveFramePng(args);
+                logToPanel("Returned from saveFramePng.");
+                break;
+            case "renderQueueAdd":
+                logToPanel("Calling renderQueueAdd function...");
+                result = renderQueueAdd(args);
+                logToPanel("Returned from renderQueueAdd.");
+                break;
+            case "renderQueueStatus":
+                logToPanel("Calling renderQueueStatus function...");
+                result = renderQueueStatus(args);
+                logToPanel("Returned from renderQueueStatus.");
+                break;
+            case "setCurrentTime":
+                logToPanel("Calling setCurrentTime function...");
+                result = setCurrentTime(args);
+                logToPanel("Returned from setCurrentTime.");
+                break;
+            case "getCurrentTime":
+                logToPanel("Calling getCurrentTime function...");
+                result = getCurrentTime(args);
+                logToPanel("Returned from getCurrentTime.");
+                break;
+            case "setWorkArea":
+                logToPanel("Calling setWorkArea function...");
+                result = setWorkArea(args);
+                logToPanel("Returned from setWorkArea.");
+                break;
+            case "getWorkArea":
+                logToPanel("Calling getWorkArea function...");
+                result = getWorkArea(args);
+                logToPanel("Returned from getWorkArea.");
+                break;
+            case "cleanupPreviewFolder":
+                logToPanel("Calling cleanupPreviewFolder function...");
+                result = cleanupPreviewFolder(args);
+                logToPanel("Returned from cleanupPreviewFolder.");
+                break;
+            case "setSuppressDialogs":
+                logToPanel("Calling setSuppressDialogs function...");
+                result = setSuppressDialogs(args);
+                logToPanel("Returned from setSuppressDialogs.");
+                break;
+            case "getSuppressDialogs":
+                logToPanel("Calling getSuppressDialogs function...");
+                result = getSuppressDialogs();
+                logToPanel("Returned from getSuppressDialogs.");
                 break;
             case "bridgeTestEffects":
                 logToPanel("Calling bridgeTestEffects function...");

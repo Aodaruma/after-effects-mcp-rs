@@ -315,6 +315,87 @@ fn dispatch_tool_inner(
                     .to_string(),
             ))
         }
+        "save-frame-png" => {
+            let comp_target = format_comp_target(&args);
+            let output_path = args
+                .get("outputPath")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown");
+            bridge.write_command_file("saveFramePng", args)?;
+            Ok(tool_text(format!(
+                "Command to save PNG frame from {comp_target} has been queued.\nOutput: {output_path}\nUse the \"get-results\" tool after a few seconds to check for confirmation."
+            )))
+        }
+        "render-queue-add" => {
+            let comp_target = format_comp_target(&args);
+            let output_path = args
+                .get("outputPath")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown");
+            bridge.write_command_file("renderQueueAdd", args)?;
+            Ok(tool_text(format!(
+                "Command to add {comp_target} to the render queue has been queued.\nOutput: {output_path}\nUse the \"get-results\" tool after a few seconds to check for confirmation."
+            )))
+        }
+        "render-queue-status" => {
+            bridge.write_command_file("renderQueueStatus", args)?;
+            Ok(tool_text(
+                "Command to get render queue status has been queued.\nUse the \"get-results\" tool after a few seconds to check for confirmation."
+                    .to_string(),
+            ))
+        }
+        "set-current-time" => {
+            bridge.write_command_file("setCurrentTime", args)?;
+            Ok(tool_text(
+                "Command to set current time has been queued.\nUse the \"get-results\" tool after a few seconds to check for confirmation."
+                    .to_string(),
+            ))
+        }
+        "get-current-time" => {
+            bridge.write_command_file("getCurrentTime", args)?;
+            Ok(tool_text(
+                "Command to get current time has been queued.\nUse the \"get-results\" tool after a few seconds to check for confirmation."
+                    .to_string(),
+            ))
+        }
+        "set-work-area" => {
+            bridge.write_command_file("setWorkArea", args)?;
+            Ok(tool_text(
+                "Command to set work area has been queued.\nUse the \"get-results\" tool after a few seconds to check for confirmation."
+                    .to_string(),
+            ))
+        }
+        "get-work-area" => {
+            bridge.write_command_file("getWorkArea", args)?;
+            Ok(tool_text(
+                "Command to get work area has been queued.\nUse the \"get-results\" tool after a few seconds to check for confirmation."
+                    .to_string(),
+            ))
+        }
+        "cleanup-preview-folder" => {
+            let folder_path = args
+                .get("folderPath")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown");
+            bridge.write_command_file("cleanupPreviewFolder", args)?;
+            Ok(tool_text(format!(
+                "Command to clean up preview folder has been queued.\nFolder: {folder_path}\nUse the \"get-results\" tool after a few seconds to check for confirmation."
+            )))
+        }
+        "set-suppress-dialogs" => {
+            bridge.write_command_file("setSuppressDialogs", args)?;
+            Ok(tool_text(
+                "Command to set dialog suppression has been queued.\nUse the \"get-results\" tool after a few seconds to check for confirmation."
+                    .to_string(),
+            ))
+        }
+        "get-suppress-dialogs" => {
+            bridge.write_command_file("getSuppressDialogs", args)?;
+            Ok(tool_text(
+                "Command to get dialog suppression state has been queued.\nUse the \"get-results\" tool after a few seconds to check for confirmation."
+                    .to_string(),
+            ))
+        }
         "mcp_aftereffects_applyEffect" => {
             run_direct_bridge_call(cfg, bridge, "applyEffect", args, "Error applying effect")
         }
