@@ -22,6 +22,8 @@ pub const ALLOWED_SCRIPTS: &[&str] = &[
     "saveFramePng",
     "renderQueueAdd",
     "renderQueueStatus",
+    "renderQueueStart",
+    "renderQueueIsRendering",
     "setCurrentTime",
     "getCurrentTime",
     "setWorkArea",
@@ -29,6 +31,11 @@ pub const ALLOWED_SCRIPTS: &[&str] = &[
     "cleanupPreviewFolder",
     "setSuppressDialogs",
     "getSuppressDialogs",
+    "projectOpen",
+    "projectClose",
+    "projectSave",
+    "projectSaveAs",
+    "applicationQuit",
     "test-animation",
     "bridgeTestEffects",
 ];
@@ -358,6 +365,30 @@ pub fn tool_specs() -> Vec<ToolSpec> {
             }),
         },
         ToolSpec {
+            name: "render-queue-start",
+            description: "Start render queue processing and wait until completion",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "queueIndex": { "type": "integer", "minimum": 1 },
+                    "includeItems": { "type": "boolean" },
+                    "suppressDialogs": { "type": "boolean" },
+                    "waitTimeoutSeconds": { "type": "integer", "minimum": 1 }
+                }
+            }),
+        },
+        ToolSpec {
+            name: "render-queue-is-rendering",
+            description: "Check whether After Effects is currently rendering",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "queueIndex": { "type": "integer", "minimum": 1 },
+                    "includeItems": { "type": "boolean" }
+                }
+            }),
+        },
+        ToolSpec {
             name: "set-current-time",
             description: "Set the current time indicator for a composition",
             input_schema: json!({
@@ -443,6 +474,75 @@ pub fn tool_specs() -> Vec<ToolSpec> {
             input_schema: json!({
                 "type": "object",
                 "properties": {}
+            }),
+        },
+        ToolSpec {
+            name: "project-open",
+            description: "Open an After Effects project file (set interactive=true to allow user dialogs)",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "filePath": { "type": "string" },
+                    "closeCurrent": { "type": "boolean" },
+                    "closeOption": { "type": "string", "enum": ["SAVE_CHANGES", "DO_NOT_SAVE_CHANGES", "PROMPT_TO_SAVE_CHANGES"] },
+                    "saveAsPath": { "type": "string" },
+                    "interactive": { "type": "boolean" },
+                    "suppressDialogs": { "type": "boolean" }
+                },
+                "required": ["filePath"]
+            }),
+        },
+        ToolSpec {
+            name: "project-close",
+            description: "Close the current After Effects project (set interactive=true to allow user dialogs)",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "closeOption": { "type": "string", "enum": ["SAVE_CHANGES", "DO_NOT_SAVE_CHANGES", "PROMPT_TO_SAVE_CHANGES"] },
+                    "saveAsPath": { "type": "string" },
+                    "interactive": { "type": "boolean" },
+                    "suppressDialogs": { "type": "boolean" }
+                }
+            }),
+        },
+        ToolSpec {
+            name: "project-save",
+            description: "Save the current After Effects project; set interactive=true to allow Save As dialog when path is unknown",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "saveAsPath": { "type": "string" },
+                    "filePath": { "type": "string" },
+                    "path": { "type": "string" },
+                    "interactive": { "type": "boolean" },
+                    "suppressDialogs": { "type": "boolean" }
+                }
+            }),
+        },
+        ToolSpec {
+            name: "project-save-as",
+            description: "Save the current After Effects project to a new file path",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "filePath": { "type": "string" },
+                    "suppressDialogs": { "type": "boolean" }
+                },
+                "required": ["filePath"]
+            }),
+        },
+        ToolSpec {
+            name: "application-quit",
+            description: "Gracefully quit After Effects after optionally closing/saving the current project",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "closeProject": { "type": "boolean" },
+                    "closeOption": { "type": "string", "enum": ["SAVE_CHANGES", "DO_NOT_SAVE_CHANGES", "PROMPT_TO_SAVE_CHANGES"] },
+                    "saveAsPath": { "type": "string" },
+                    "interactive": { "type": "boolean" },
+                    "suppressDialogs": { "type": "boolean" }
+                }
             }),
         },
         ToolSpec {
@@ -753,9 +853,12 @@ Best practices:
 - Prefer compId/layerId when available to avoid index drift
 - Call get-results after queuing any tool command
 - save-frame-png is optimized for fast previews (single PNG only)
-- render-queue-add only queues; start rendering manually in After Effects
+- Use render-queue-start when you want MCP to wait until render completion
 - Use suppressDialogs (default true) to avoid blocking dialogs
 - Ensure outputPath points to a writable location
+- Default mode is non-interactive. For LLM automation, keep interactive=false and pass explicit paths.
+- For user handoff, set interactive=true (dialogs allowed; suppressDialogs is treated as false).
+- In non-interactive close/open/quit flows, avoid prompt-based close options and provide saveAsPath when needed.
 
 Available scripts:
 - getProjectInfo
@@ -775,6 +878,8 @@ Available scripts:
 - saveFramePng
 - renderQueueAdd
 - renderQueueStatus
+- renderQueueStart
+- renderQueueIsRendering
 - setCurrentTime
 - getCurrentTime
 - setWorkArea
@@ -782,6 +887,11 @@ Available scripts:
 - cleanupPreviewFolder
 - setSuppressDialogs
 - getSuppressDialogs
+- projectOpen
+- projectClose
+- projectSave
+- projectSaveAs
+- applicationQuit
 "#
 }
 

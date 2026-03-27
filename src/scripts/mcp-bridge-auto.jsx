@@ -509,6 +509,18 @@ function fxEnsureParentFolder(file) {
     }
 }
 
+function fxDateToIsoString(dateObj) {
+    var d = dateObj || new Date();
+    if (d && typeof d.toISOString === "function") {
+        return d.toISOString();
+    }
+    try {
+        return d.toUTCString();
+    } catch (_e) {
+        return "" + d;
+    }
+}
+
 function fxSetSuppressDialogs(enabled) {
     if (enabled) {
         if (!fxDialogsSuppressed) {
@@ -1377,6 +1389,255 @@ function fxResolveRenderQueueItem(queueIndex) {
     return item;
 }
 
+function fxGetRenderStatusName(statusValue) {
+    if (statusValue === null || statusValue === undefined) {
+        return null;
+    }
+    if (typeof RQItemStatus === "undefined") {
+        return "" + statusValue;
+    }
+    try {
+        if (statusValue === RQItemStatus.UNQUEUED) return "UNQUEUED";
+        if (statusValue === RQItemStatus.QUEUED) return "QUEUED";
+        if (statusValue === RQItemStatus.NEEDS_OUTPUT) return "NEEDS_OUTPUT";
+        if (statusValue === RQItemStatus.RENDERING) return "RENDERING";
+        if (statusValue === RQItemStatus.USER_STOPPED) return "USER_STOPPED";
+        if (statusValue === RQItemStatus.ERR_STOPPED) return "ERR_STOPPED";
+        if (statusValue === RQItemStatus.DONE) return "DONE";
+        if (statusValue === RQItemStatus.WILL_CONTINUE) return "WILL_CONTINUE";
+    } catch (_e) {}
+    return "" + statusValue;
+}
+
+function fxRenderQueueSnapshot(includeItems) {
+    var rq = app.project ? app.project.renderQueue : null;
+    if (!rq) {
+        return {
+            available: false,
+            isRendering: false,
+            totalItems: 0,
+            items: []
+        };
+    }
+
+    var total = 0;
+    try {
+        total = rq.numItems || 0;
+    } catch (_e) {}
+
+    var snapshot = {
+        available: true,
+        isRendering: false,
+        totalItems: total,
+        items: []
+    };
+
+    try {
+        snapshot.isRendering = rq.rendering === true;
+    } catch (_e2) {}
+
+    if (includeItems === false) {
+        return snapshot;
+    }
+
+    for (var i = 1; i <= total; i++) {
+        var item = null;
+        try {
+            item = rq.item(i);
+        } catch (_itemErr) {}
+        if (!item) {
+            continue;
+        }
+
+        var statusValue = null;
+        try {
+            statusValue = item.status;
+        } catch (_statusErr) {}
+
+        var outputPath = null;
+        try {
+            var om = item.outputModule(1);
+            if (om && om.file) {
+                outputPath = om.file.fsName;
+            }
+        } catch (_omErr) {}
+
+        var compInfo = null;
+        try {
+            if (item.comp) {
+                compInfo = {
+                    id: fxGetCompId(item.comp),
+                    name: item.comp.name
+                };
+            }
+        } catch (_compErr) {}
+
+        snapshot.items.push({
+            queueIndex: i,
+            status: statusValue,
+            statusName: fxGetRenderStatusName(statusValue),
+            render: item.render === true,
+            outputPath: outputPath,
+            composition: compInfo
+        });
+    }
+
+    return snapshot;
+}
+
+function fxRenderItemDiagnostics(item, queueIndex) {
+    var statusValue = null;
+    try {
+        statusValue = item.status;
+    } catch (_statusErr) {}
+
+    var outputPath = null;
+    var outputExists = null;
+    try {
+        var om = item.outputModule(1);
+        if (om && om.file) {
+            outputPath = om.file.fsName;
+            outputExists = om.file.exists === true;
+        }
+    } catch (_omErr) {}
+
+    var startTime = null;
+    try {
+        if (item.startTime) {
+            startTime = item.startTime.toString();
+        }
+    } catch (_startErr) {}
+
+    var endTime = null;
+    try {
+        if (item.endTime) {
+            endTime = item.endTime.toString();
+        }
+    } catch (_endErr) {}
+
+    return {
+        queueIndex: queueIndex,
+        status: statusValue,
+        statusName: fxGetRenderStatusName(statusValue),
+        render: item.render === true,
+        outputPath: outputPath,
+        outputExists: outputExists,
+        startTime: startTime,
+        endTime: endTime
+    };
+}
+
+function fxCanToggleRenderFlag(statusValue) {
+    if (typeof RQItemStatus === "undefined") {
+        return true;
+    }
+    try {
+        if (statusValue === RQItemStatus.QUEUED) return true;
+        if (statusValue === RQItemStatus.UNQUEUED) return true;
+        if (statusValue === RQItemStatus.NEEDS_OUTPUT) return true;
+        return false;
+    } catch (_e) {
+        return true;
+    }
+}
+
+function fxResolveCloseOption(rawValue, defaultName) {
+    if (typeof CloseOptions === "undefined") {
+        throw new Error("CloseOptions is not available in this host.");
+    }
+    var name = rawValue;
+    if (name === undefined || name === null || name === "") {
+        name = defaultName || "DO_NOT_SAVE_CHANGES";
+    }
+    name = ("" + name).toUpperCase();
+
+    if (name === "SAVE" || name === "SAVE_CHANGES") {
+        return {
+            key: "SAVE_CHANGES",
+            value: CloseOptions.SAVE_CHANGES
+        };
+    }
+    if (
+        name === "DO_NOT_SAVE" ||
+        name === "DONT_SAVE" ||
+        name === "DO_NOT_SAVE_CHANGES"
+    ) {
+        return {
+            key: "DO_NOT_SAVE_CHANGES",
+            value: CloseOptions.DO_NOT_SAVE_CHANGES
+        };
+    }
+    if (name === "PROMPT" || name === "PROMPT_TO_SAVE_CHANGES") {
+        return {
+            key: "PROMPT_TO_SAVE_CHANGES",
+            value: CloseOptions.PROMPT_TO_SAVE_CHANGES
+        };
+    }
+    throw new Error("Unsupported closeOption: " + rawValue);
+}
+
+function fxCurrentProjectInfo() {
+    var proj = app.project;
+    var path = null;
+    if (proj && proj.file) {
+        path = proj.file.fsName;
+    }
+    var dirty = null;
+    try {
+        dirty = proj.dirty;
+    } catch (_e) {}
+    return {
+        name: (proj && proj.file) ? proj.file.name : "Untitled Project",
+        path: path,
+        dirty: dirty,
+        numItems: proj ? proj.numItems : 0
+    };
+}
+
+function fxCloseProjectWithMode(options, defaultCloseOptionName, interactive) {
+    if (!app.project) {
+        throw new Error("No project is currently open.");
+    }
+    var closeOption = fxResolveCloseOption(options.closeOption, defaultCloseOptionName || "DO_NOT_SAVE_CHANGES");
+    var saveAsPath = options.saveAsPath || options.filePath || options.path || null;
+
+    if (closeOption.key === "PROMPT_TO_SAVE_CHANGES") {
+        if (!interactive) {
+            throw new Error(
+                "PROMPT_TO_SAVE_CHANGES is not supported in non-interactive mode. " +
+                "Use interactive=true with suppressDialogs=false, or use SAVE_CHANGES/DO_NOT_SAVE_CHANGES."
+            );
+        }
+    }
+
+    if (closeOption.key === "SAVE_CHANGES") {
+        var existingFile = null;
+        try {
+            existingFile = app.project.file;
+        } catch (_fileErr) {}
+
+        if (existingFile && existingFile.exists === true) {
+            app.project.save();
+        } else {
+            if (saveAsPath) {
+                var saveFile = new File(saveAsPath);
+                fxEnsureParentFolder(saveFile);
+                app.project.save(saveFile);
+            } else if (!interactive) {
+                throw new Error(
+                    "Current project has no concrete file path. " +
+                    "Provide saveAsPath/filePath/path before closing with SAVE_CHANGES in non-interactive mode."
+                );
+            }
+            // interactive mode without explicit path is allowed:
+            // app.project.close(SAVE_CHANGES) may show Save As dialog for user input.
+        }
+    }
+
+    app.project.close(closeOption.value);
+    return closeOption.key;
+}
+
 function saveFramePng(args) {
     try {
         var options = args || {};
@@ -1537,6 +1798,373 @@ function renderQueueStatus(args) {
             composition: compInfo,
             outputPath: outputPath
         }, null, 2);
+    } catch (error) {
+        return JSON.stringify({
+            status: "error",
+            message: error.toString()
+        }, null, 2);
+    }
+}
+
+function renderQueueStart(args) {
+    var renderStateBackup = null;
+    var previousOnError = null;
+    var renderErrors = [];
+    try {
+        var options = args || {};
+        var suppressDialogs = fxGetBooleanArg(options, "suppressDialogs", true);
+        var includeItems = fxGetBooleanArg(options, "includeItems", true);
+        var targetQueueIndex = fxGetNumberArg(options.queueIndex, null);
+        if (targetQueueIndex !== null) {
+            targetQueueIndex = parseInt(targetQueueIndex, 10);
+            if (isNaN(targetQueueIndex) || targetQueueIndex < 1) {
+                throw new Error("queueIndex must be a positive integer");
+            }
+        }
+
+        return fxWithSuppressDialogs(suppressDialogs, function () {
+            var rq = app.project.renderQueue;
+            if (!rq) {
+                throw new Error("Render queue is not available");
+            }
+            if (!rq.numItems || rq.numItems < 1) {
+                throw new Error("Render queue is empty");
+            }
+
+            if (targetQueueIndex !== null) {
+                fxResolveRenderQueueItem(targetQueueIndex);
+                renderStateBackup = [];
+                for (var i = 1; i <= rq.numItems; i++) {
+                    var item = fxResolveRenderQueueItem(i);
+                    var currentRender = item.render === true;
+                    var desiredRender = (i === targetQueueIndex);
+                    if (currentRender === desiredRender) {
+                        continue;
+                    }
+
+                    var statusValue = null;
+                    try {
+                        statusValue = item.status;
+                    } catch (_statusErr) {}
+
+                    if (!fxCanToggleRenderFlag(statusValue)) {
+                        if (i === targetQueueIndex) {
+                            throw new Error(
+                                "Cannot enable rendering for queue item " + i +
+                                " with status " + fxGetRenderStatusName(statusValue) + "."
+                            );
+                        }
+                        continue;
+                    }
+
+                    item.render = desiredRender;
+                    renderStateBackup.push({
+                        queueIndex: i,
+                        render: currentRender
+                    });
+                }
+            }
+
+            var targetBefore = null;
+            if (targetQueueIndex !== null) {
+                targetBefore = fxRenderItemDiagnostics(
+                    fxResolveRenderQueueItem(targetQueueIndex),
+                    targetQueueIndex
+                );
+            }
+
+            previousOnError = app.onError;
+            app.onError = function (errString, severityString) {
+                try {
+                    renderErrors.push({
+                        message: "" + errString,
+                        severity: severityString ? ("" + severityString) : null,
+                        timestamp: fxDateToIsoString(new Date())
+                    });
+                } catch (_captureErr) {}
+            };
+
+            var before = fxRenderQueueSnapshot(includeItems);
+            var startedAt = new Date();
+            rq.render();
+            var finishedAt = new Date();
+            var after = fxRenderQueueSnapshot(includeItems);
+
+            var targetAfter = null;
+            var targetDone = null;
+            if (targetQueueIndex !== null) {
+                var targetItem = fxResolveRenderQueueItem(targetQueueIndex);
+                targetAfter = fxRenderItemDiagnostics(targetItem, targetQueueIndex);
+                try {
+                    targetDone = targetItem.status === RQItemStatus.DONE;
+                } catch (_doneErr) {
+                    targetDone = null;
+                }
+            }
+
+            var outputExists = null;
+            if (targetAfter) {
+                outputExists = targetAfter.outputExists;
+            }
+
+            var blockingErrors = [];
+            for (var eIdx = 0; eIdx < renderErrors.length; eIdx++) {
+                var evt = renderErrors[eIdx];
+                var sev = evt && evt.severity ? ("" + evt.severity).toUpperCase() : "";
+                if (sev === "PROGRESS" || sev === "INFO") {
+                    continue;
+                }
+                blockingErrors.push(evt);
+            }
+
+            var successState = true;
+            if (blockingErrors.length > 0) {
+                successState = false;
+            }
+            if (targetDone === false) {
+                successState = false;
+            }
+            if (outputExists === false) {
+                successState = false;
+            }
+
+            return JSON.stringify({
+                status: successState ? "success" : "error",
+                message: successState
+                    ? "Render queue processing completed."
+                    : "Render queue did not finish cleanly. See diagnostics.",
+                startedAt: fxDateToIsoString(startedAt),
+                finishedAt: fxDateToIsoString(finishedAt),
+                durationSeconds: (finishedAt.getTime() - startedAt.getTime()) / 1000,
+                queueIndex: targetQueueIndex,
+                targetBefore: targetBefore,
+                targetAfter: targetAfter,
+                targetDone: targetDone,
+                outputExists: outputExists,
+                errors: blockingErrors,
+                events: renderErrors,
+                before: before,
+                after: after
+            }, null, 2);
+        });
+    } catch (error) {
+        return JSON.stringify({
+            status: "error",
+            message: error.toString()
+        }, null, 2);
+    } finally {
+        try {
+            app.onError = previousOnError;
+        } catch (_restoreOnErrorErr) {}
+
+        if (renderStateBackup && app.project && app.project.renderQueue) {
+            for (var b = 0; b < renderStateBackup.length; b++) {
+                try {
+                    var state = renderStateBackup[b];
+                    var rqItem = fxResolveRenderQueueItem(state.queueIndex);
+                    rqItem.render = state.render;
+                } catch (_restoreErr) {}
+            }
+        }
+    }
+}
+
+function renderQueueIsRendering(args) {
+    try {
+        var options = args || {};
+        var includeItems = fxGetBooleanArg(options, "includeItems", true);
+        var snapshot = fxRenderQueueSnapshot(includeItems);
+        var queueIndex = fxGetNumberArg(options.queueIndex, null);
+        var targetItem = null;
+
+        if (queueIndex !== null) {
+            var item = fxResolveRenderQueueItem(queueIndex);
+            var statusValue = null;
+            try {
+                statusValue = item.status;
+            } catch (_statusErr) {}
+            targetItem = {
+                queueIndex: parseInt(queueIndex, 10),
+                status: statusValue,
+                statusName: fxGetRenderStatusName(statusValue),
+                render: item.render === true
+            };
+        }
+
+        return JSON.stringify({
+            status: "success",
+            isRendering: snapshot.isRendering === true,
+            queue: snapshot,
+            targetItem: targetItem
+        }, null, 2);
+    } catch (error) {
+        return JSON.stringify({
+            status: "error",
+            message: error.toString()
+        }, null, 2);
+    }
+}
+
+function projectOpen(args) {
+    try {
+        var options = args || {};
+        var filePath = options.filePath || options.path || options.projectPath;
+        if (!filePath) {
+            throw new Error("filePath is required");
+        }
+        var closeCurrent = fxGetBooleanArg(options, "closeCurrent", true);
+        var closeOption = fxResolveCloseOption(options.closeOption, "DO_NOT_SAVE_CHANGES");
+        var interactive = fxGetBooleanArg(options, "interactive", false);
+        var suppressDialogs = interactive ? false : fxGetBooleanArg(options, "suppressDialogs", true);
+
+        return fxWithSuppressDialogs(suppressDialogs, function () {
+            if (closeCurrent && app.project) {
+                closeOption.key = fxCloseProjectWithMode(options, "DO_NOT_SAVE_CHANGES", interactive);
+            }
+            var file = new File(filePath);
+            if (!file.exists) {
+                throw new Error("Project file not found: " + filePath);
+            }
+            app.open(file);
+            return JSON.stringify({
+                status: "success",
+                action: "opened",
+                project: fxCurrentProjectInfo(),
+                closeOption: closeOption.key
+            }, null, 2);
+        });
+    } catch (error) {
+        return JSON.stringify({
+            status: "error",
+            message: error.toString()
+        }, null, 2);
+    }
+}
+
+function projectClose(args) {
+    try {
+        var options = args || {};
+        var closeOption = fxResolveCloseOption(options.closeOption, "DO_NOT_SAVE_CHANGES");
+        var interactive = fxGetBooleanArg(options, "interactive", false);
+        var suppressDialogs = interactive ? false : fxGetBooleanArg(options, "suppressDialogs", true);
+        var before = fxCurrentProjectInfo();
+
+        return fxWithSuppressDialogs(suppressDialogs, function () {
+            closeOption.key = fxCloseProjectWithMode(options, "DO_NOT_SAVE_CHANGES", interactive);
+            return JSON.stringify({
+                status: "success",
+                action: "closed",
+                closeOption: closeOption.key,
+                closedProject: before,
+                currentProject: fxCurrentProjectInfo()
+            }, null, 2);
+        });
+    } catch (error) {
+        return JSON.stringify({
+            status: "error",
+            message: error.toString()
+        }, null, 2);
+    }
+}
+
+function projectSave(args) {
+    try {
+        var options = args || {};
+        var saveAsPath = options.saveAsPath || options.filePath || options.path || null;
+        var interactive = fxGetBooleanArg(options, "interactive", false);
+        var suppressDialogs = interactive ? false : fxGetBooleanArg(options, "suppressDialogs", true);
+
+        return fxWithSuppressDialogs(suppressDialogs, function () {
+            if (!app.project) {
+                throw new Error("No project is currently open.");
+            }
+
+            if (saveAsPath) {
+                var file = new File(saveAsPath);
+                fxEnsureParentFolder(file);
+                app.project.save(file);
+            } else {
+                var existingFile = null;
+                try {
+                    existingFile = app.project.file;
+                } catch (_fileErr) {}
+
+                if (!existingFile || existingFile.exists !== true) {
+                    if (!interactive) {
+                        throw new Error(
+                            "Current project is not saved to a concrete file path. " +
+                            "Provide saveAsPath/filePath/path to save without dialogs, or set interactive=true."
+                        );
+                    }
+                }
+                app.project.save();
+            }
+
+            return JSON.stringify({
+                status: "success",
+                action: "saved",
+                project: fxCurrentProjectInfo()
+            }, null, 2);
+        });
+    } catch (error) {
+        return JSON.stringify({
+            status: "error",
+            message: error.toString()
+        }, null, 2);
+    }
+}
+
+function projectSaveAs(args) {
+    try {
+        var options = args || {};
+        var filePath = options.filePath || options.path || options.saveAsPath;
+        if (!filePath) {
+            throw new Error("filePath is required");
+        }
+        options.saveAsPath = filePath;
+        return projectSave(options);
+    } catch (error) {
+        return JSON.stringify({
+            status: "error",
+            message: error.toString()
+        }, null, 2);
+    }
+}
+
+function applicationQuit(args) {
+    try {
+        var options = args || {};
+        var closeProject = fxGetBooleanArg(options, "closeProject", true);
+        var closeOption = fxResolveCloseOption(options.closeOption, "DO_NOT_SAVE_CHANGES");
+        var interactive = fxGetBooleanArg(options, "interactive", false);
+        var suppressDialogs = interactive ? false : fxGetBooleanArg(options, "suppressDialogs", true);
+        var before = fxCurrentProjectInfo();
+
+        return fxWithSuppressDialogs(suppressDialogs, function () {
+            if (closeProject && app.project) {
+                closeOption.key = fxCloseProjectWithMode(options, "DO_NOT_SAVE_CHANGES", interactive);
+            } else if (!closeProject && app.project) {
+                var dirty = false;
+                try {
+                    dirty = app.project.dirty === true;
+                } catch (_dirtyErr) {}
+                if (dirty && !interactive) {
+                    throw new Error(
+                        "closeProject=false is not allowed when the current project has unsaved changes. " +
+                        "Use closeProject=true with closeOption/saveAsPath, or set interactive=true."
+                    );
+                }
+            }
+            return JSON.stringify({
+                status: "success",
+                action: "quit-requested",
+                closeProject: closeProject,
+                closeOption: closeOption.key,
+                previousProject: before,
+                currentProject: fxCurrentProjectInfo(),
+                _quitRequested: true
+            }, null, 2);
+        });
     } catch (error) {
         return JSON.stringify({
             status: "error",
@@ -2139,6 +2767,7 @@ function getLayerInfo() {
 // Execute command
 function executeCommand(command, args) {
     var result = "";
+    var shouldQuitAfterWrite = false;
     
     logToPanel("Executing command: " + command);
     setStatus("Running: " + command);
@@ -2227,6 +2856,16 @@ function executeCommand(command, args) {
                 result = renderQueueStatus(args);
                 logToPanel("Returned from renderQueueStatus.");
                 break;
+            case "renderQueueStart":
+                logToPanel("Calling renderQueueStart function...");
+                result = renderQueueStart(args);
+                logToPanel("Returned from renderQueueStart.");
+                break;
+            case "renderQueueIsRendering":
+                logToPanel("Calling renderQueueIsRendering function...");
+                result = renderQueueIsRendering(args);
+                logToPanel("Returned from renderQueueIsRendering.");
+                break;
             case "setCurrentTime":
                 logToPanel("Calling setCurrentTime function...");
                 result = setCurrentTime(args);
@@ -2262,6 +2901,31 @@ function executeCommand(command, args) {
                 result = getSuppressDialogs();
                 logToPanel("Returned from getSuppressDialogs.");
                 break;
+            case "projectOpen":
+                logToPanel("Calling projectOpen function...");
+                result = projectOpen(args);
+                logToPanel("Returned from projectOpen.");
+                break;
+            case "projectClose":
+                logToPanel("Calling projectClose function...");
+                result = projectClose(args);
+                logToPanel("Returned from projectClose.");
+                break;
+            case "projectSave":
+                logToPanel("Calling projectSave function...");
+                result = projectSave(args);
+                logToPanel("Returned from projectSave.");
+                break;
+            case "projectSaveAs":
+                logToPanel("Calling projectSaveAs function...");
+                result = projectSaveAs(args);
+                logToPanel("Returned from projectSaveAs.");
+                break;
+            case "applicationQuit":
+                logToPanel("Calling applicationQuit function...");
+                result = applicationQuit(args);
+                logToPanel("Returned from applicationQuit.");
+                break;
             case "bridgeTestEffects":
                 logToPanel("Calling bridgeTestEffects function...");
                 result = bridgeTestEffects(args);
@@ -2279,8 +2943,14 @@ function executeCommand(command, args) {
         // Try to parse the result as JSON to add a timestamp
         try {
             var resultObj = JSON.parse(resultString);
+            if (resultObj && resultObj._quitRequested === true) {
+                shouldQuitAfterWrite = true;
+                try {
+                    delete resultObj._quitRequested;
+                } catch (_deleteQuitFlagErr) {}
+            }
             // Add a timestamp to help identify if we're getting fresh results
-            resultObj._responseTimestamp = new Date().toISOString();
+            resultObj._responseTimestamp = fxDateToIsoString(new Date());
             resultObj._commandExecuted = command;
             resultString = JSON.stringify(resultObj, null, 2);
             logToPanel("Added timestamp to result JSON for tracking freshness.");
@@ -2319,6 +2989,15 @@ function executeCommand(command, args) {
         logToPanel("Updating command status to completed...");
         updateCommandStatus("completed");
         logToPanel("Command status updated.");
+
+        if (shouldQuitAfterWrite) {
+            try {
+                logToPanel("Scheduling graceful application quit.");
+                app.scheduleTask("app.quit()", 300, false);
+            } catch (quitScheduleError) {
+                logToPanel("Failed to schedule app.quit(): " + quitScheduleError.toString());
+            }
+        }
         
     } catch (error) {
         if (isModalDialogError(error)) {

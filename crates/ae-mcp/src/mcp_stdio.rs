@@ -320,7 +320,8 @@ fn dispatch_tool_inner(
             let output_path = args
                 .get("outputPath")
                 .and_then(Value::as_str)
-                .unwrap_or("unknown");
+                .unwrap_or("unknown")
+                .to_string();
             bridge.write_command_file("saveFramePng", args)?;
             Ok(tool_text(format!(
                 "Command to save PNG frame from {comp_target} has been queued.\nOutput: {output_path}\nUse the \"get-results\" tool after a few seconds to check for confirmation."
@@ -331,7 +332,8 @@ fn dispatch_tool_inner(
             let output_path = args
                 .get("outputPath")
                 .and_then(Value::as_str)
-                .unwrap_or("unknown");
+                .unwrap_or("unknown")
+                .to_string();
             bridge.write_command_file("renderQueueAdd", args)?;
             Ok(tool_text(format!(
                 "Command to add {comp_target} to the render queue has been queued.\nOutput: {output_path}\nUse the \"get-results\" tool after a few seconds to check for confirmation."
@@ -344,6 +346,27 @@ fn dispatch_tool_inner(
                     .to_string(),
             ))
         }
+        "render-queue-start" => {
+            let wait_timeout_seconds = args
+                .get("waitTimeoutSeconds")
+                .and_then(Value::as_u64)
+                .unwrap_or(7_200);
+            bridge.clear_results_file()?;
+            bridge.write_command_file("renderQueueStart", args)?;
+            let text = bridge.wait_for_bridge_result(
+                Some("renderQueueStart"),
+                Duration::from_secs(wait_timeout_seconds),
+                Duration::from_millis(cfg.poll_interval_ms),
+            )?;
+            Ok(tool_text(text))
+        }
+        "render-queue-is-rendering" => run_direct_bridge_call(
+            cfg,
+            bridge,
+            "renderQueueIsRendering",
+            args,
+            "Error checking render state",
+        ),
         "set-current-time" => {
             bridge.write_command_file("setCurrentTime", args)?;
             Ok(tool_text(
@@ -376,7 +399,8 @@ fn dispatch_tool_inner(
             let folder_path = args
                 .get("folderPath")
                 .and_then(Value::as_str)
-                .unwrap_or("unknown");
+                .unwrap_or("unknown")
+                .to_string();
             bridge.write_command_file("cleanupPreviewFolder", args)?;
             Ok(tool_text(format!(
                 "Command to clean up preview folder has been queued.\nFolder: {folder_path}\nUse the \"get-results\" tool after a few seconds to check for confirmation."
@@ -393,6 +417,62 @@ fn dispatch_tool_inner(
             bridge.write_command_file("getSuppressDialogs", args)?;
             Ok(tool_text(
                 "Command to get dialog suppression state has been queued.\nUse the \"get-results\" tool after a few seconds to check for confirmation."
+                    .to_string(),
+            ))
+        }
+        "project-open" => {
+            let file_path = args
+                .get("filePath")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown")
+                .to_string();
+            bridge.write_command_file("projectOpen", args)?;
+            Ok(tool_text(format!(
+                "Command to open project has been queued.\nFile: {file_path}\nUse the \"get-results\" tool after a few seconds to check for confirmation."
+            )))
+        }
+        "project-close" => {
+            bridge.write_command_file("projectClose", args)?;
+            Ok(tool_text(
+                "Command to close current project has been queued.\nUse the \"get-results\" tool after a few seconds to check for confirmation."
+                    .to_string(),
+            ))
+        }
+        "project-save" => {
+            let save_as_path = args
+                .get("saveAsPath")
+                .or_else(|| args.get("filePath"))
+                .or_else(|| args.get("path"))
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            bridge.write_command_file("projectSave", args)?;
+            if save_as_path.is_empty() {
+                Ok(tool_text(
+                    "Command to save current project has been queued.\nUse the \"get-results\" tool after a few seconds to check for confirmation."
+                        .to_string(),
+                ))
+            } else {
+                Ok(tool_text(format!(
+                    "Command to save project has been queued.\nSave As: {save_as_path}\nUse the \"get-results\" tool after a few seconds to check for confirmation."
+                )))
+            }
+        }
+        "project-save-as" => {
+            let file_path = args
+                .get("filePath")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown")
+                .to_string();
+            bridge.write_command_file("projectSaveAs", args)?;
+            Ok(tool_text(format!(
+                "Command to save project as has been queued.\nFile: {file_path}\nUse the \"get-results\" tool after a few seconds to check for confirmation."
+            )))
+        }
+        "application-quit" => {
+            bridge.write_command_file("applicationQuit", args)?;
+            Ok(tool_text(
+                "Command to gracefully quit After Effects has been queued.\nUse the \"get-results\" tool after a few seconds to check for confirmation."
                     .to_string(),
             ))
         }

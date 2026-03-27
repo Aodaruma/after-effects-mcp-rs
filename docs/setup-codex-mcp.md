@@ -136,6 +136,31 @@ enabled = true
   - `ae_command.json`
   - `ae_mcp_result.json`
 
+### 6.1 LLM運用時の推奨プロンプト（重要）
+
+LLMがMCPを自動実行する場合は、まず非対話モードを前提にしてください。
+
+- 通常（自動実行）:
+  - `interactive=false` を使う（既定）
+  - `suppressDialogs=true` を維持
+  - 保存系は必ず `saveAsPath/filePath/path` を渡す
+  - `closeOption` は `SAVE_CHANGES` または `DO_NOT_SAVE_CHANGES` を使う
+- ユーザーに操作を渡す場合のみ:
+  - `interactive=true` を指定（ダイアログ表示を許可）
+  - `PROMPT_TO_SAVE_CHANGES` や未保存時の Save As ダイアログを許可
+
+プロンプト例（LLM向け運用ルール）:
+
+```text
+After Effects MCP を使う際は、通常は non-interactive で実行すること。
+- interactive=false（default）
+- suppressDialogs=true
+- 保存が必要な操作では saveAsPath/filePath/path を必ず明示
+- closeOption は SAVE_CHANGES または DO_NOT_SAVE_CHANGES を使い、PROMPT は使わない
+
+ユーザー操作に引き継ぐときだけ interactive=true を使ってダイアログ表示を許可する。
+```
+
 ## 7. サービス（daemon）登録を使う場合
 
 `serve-daemon` と `service` サブコマンドは実装済みです。
