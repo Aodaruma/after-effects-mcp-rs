@@ -10,6 +10,12 @@ use tokio::io::{
 };
 use tracing::{debug, error, info};
 
+#[derive(Debug, Clone, Copy)]
+enum MessageFormat {
+    ContentLength,
+    JsonLine,
+}
+
 #[derive(Debug, Deserialize)]
 struct JsonRpcRequest {
     #[allow(dead_code)]
@@ -29,7 +35,7 @@ pub async fn run_stdio_server(cfg: AppConfig) -> Result<()> {
 
     info!("MCP stdio server started");
 
-    while let Some(message) = read_jsonrpc_message(&mut reader).await? {
+    while let Some((message, format)) = read_jsonrpc_message(&mut reader).await? {
         debug!("received message: {}", message);
         let response = match serde_json::from_value::<JsonRpcRequest>(message.clone()) {
             Ok(req) => handle_request(&cfg, &bridge, req).await,
@@ -41,7 +47,7 @@ pub async fn run_stdio_server(cfg: AppConfig) -> Result<()> {
         };
 
         if let Some(payload) = response {
-            write_jsonrpc_message(&mut writer, &payload).await?;
+            write_jsonrpc_message(&mut writer, &payload, format).await?;
         }
     }
 
@@ -288,10 +294,38 @@ fn tool_error(text: String) -> Value {
     })
 }
 
-async fn read_jsonrpc_message<R>(reader: &mut R) -> Result<Option<Value>>
+async fn read_jsonrpc_message<R>(reader: &mut R) -> Result<Option<(Value, MessageFormat)>>
 where
     R: AsyncBufRead + Unpin,
 {
+    loop {
+        let buf = reader
+            .fill_buf()
+            .await
+            .with_context(|| "failed to inspect MCP input buffer")?;
+        let Some(first) = buf.first().copied() else {
+            return Ok(None);
+        };
+        if first == b'\r' || first == b'\n' {
+            reader.consume(1);
+            continue;
+        }
+        if first == b'{' || first == b'[' {
+            let mut line = String::new();
+            let n = reader
+                .read_line(&mut line)
+                .await
+                .with_context(|| "failed to read JSON-line MCP message")?;
+            if n == 0 {
+                return Ok(None);
+            }
+            let value = serde_json::from_str::<Value>(line.trim_end_matches(['\r', '\n']))
+                .with_context(|| "failed to parse JSON-line MCP request")?;
+            return Ok(Some((value, MessageFormat::JsonLine)));
+        }
+        break;
+    }
+
     let mut content_length: Option<usize> = None;
     loop {
         let mut line = String::new();
@@ -310,7 +344,10 @@ where
         if trimmed.is_empty() {
             break;
         }
-        if let Some(rest) = trimmed.strip_prefix("Content-Length:") {
+        if let Some((name, rest)) = trimmed.split_once(':') {
+            if !name.eq_ignore_ascii_case("content-length") {
+                continue;
+            }
             let len = rest
                 .trim()
                 .parse::<usize>()
@@ -327,23 +364,35 @@ where
         .with_context(|| "failed to read message body")?;
     let value = serde_json::from_slice::<Value>(&buf)
         .with_context(|| "failed to parse JSON-RPC request")?;
-    Ok(Some(value))
+    Ok(Some((value, MessageFormat::ContentLength)))
 }
 
-async fn write_jsonrpc_message<W>(writer: &mut W, value: &Value) -> Result<()>
+async fn write_jsonrpc_message<W>(
+    writer: &mut W,
+    value: &Value,
+    format: MessageFormat,
+) -> Result<()>
 where
     W: AsyncWrite + Unpin,
 {
     let payload = serde_json::to_vec(value).with_context(|| "failed to serialize response JSON")?;
-    let header = format!("Content-Length: {}\r\n\r\n", payload.len());
-    writer
-        .write_all(header.as_bytes())
-        .await
-        .with_context(|| "failed to write response header")?;
+    if matches!(format, MessageFormat::ContentLength) {
+        let header = format!("Content-Length: {}\r\n\r\n", payload.len());
+        writer
+            .write_all(header.as_bytes())
+            .await
+            .with_context(|| "failed to write response header")?;
+    }
     writer
         .write_all(&payload)
         .await
         .with_context(|| "failed to write response body")?;
+    if matches!(format, MessageFormat::JsonLine) {
+        writer
+            .write_all(b"\n")
+            .await
+            .with_context(|| "failed to write JSON-line response terminator")?;
+    }
     writer
         .flush()
         .await
