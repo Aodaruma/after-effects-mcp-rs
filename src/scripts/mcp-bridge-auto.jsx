@@ -1,5 +1,6 @@
 // mcp-bridge-auto.jsx
 // Auto-running MCP Bridge panel for After Effects
+#targetengine "ae_mcp_bridge"
 
 // Remove #include directives as we define functions below
 /*
@@ -2545,6 +2546,10 @@ logText.preferredSize.height = 200;
 var autoRunCheckbox = panel.add("checkbox", undefined, "Auto-run commands");
 autoRunCheckbox.value = true;
 
+// Debug file logging checkbox
+var debugLogCheckbox = panel.add("checkbox", undefined, "Write debug log");
+debugLogCheckbox.value = false;
+
 // Check interval (ms)
 var checkInterval = 2000;
 var isChecking = false;
@@ -2553,6 +2558,12 @@ var hasFileNetworkPermission = false;
 var hasShownPermissionDialog = false;
 var autoRunValueBeforePermissionLock = autoRunCheckbox.value;
 var commandCheckerTaskId = 0;
+var lastCommandCheckerState = "";
+var debugLogEnabled = false;
+var debugLogPathOverride = "";
+var bridgeInstanceId = "";
+var currentRequestId = "";
+var currentCommandName = "";
 
 function isControlValid(control) {
     try {
@@ -2578,6 +2589,14 @@ function safePanelUpdate() {
     } catch (_e) {}
 }
 
+function logCommandCheckerState(key, message) {
+    if (lastCommandCheckerState === key) {
+        return;
+    }
+    lastCommandCheckerState = key;
+    logToPanel(message);
+}
+
 function getBridgeFolderPath() {
     return Folder.myDocuments.fsName + "/ae-mcp-bridge";
 }
@@ -2592,16 +2611,242 @@ function ensureBridgeFolder() {
     return bridgeFolder;
 }
 
+function sanitizeBridgePathSegment(value) {
+    return String(value || "unknown").replace(/[^A-Za-z0-9_.-]/g, "_");
+}
+
+function createBridgeInstanceId() {
+    var version = "unknown";
+    try {
+        version = app.version || "unknown";
+    } catch (_versionErr) {}
+    return "ae-" +
+        sanitizeBridgePathSegment(version) +
+        "-" +
+        (new Date().getTime()) +
+        "-" +
+        Math.floor(Math.random() * 1000000);
+}
+
+function getBridgeInstanceId() {
+    if (!bridgeInstanceId) {
+        bridgeInstanceId = createBridgeInstanceId();
+    }
+    return bridgeInstanceId;
+}
+
+function ensureInstanceFolder() {
+    var root = ensureBridgeFolder();
+    var instancesFolder = new Folder(root.fsName + "/instances");
+    if (!instancesFolder.exists) {
+        if (!instancesFolder.create()) {
+            throw new Error("Unable to create instances folder: " + instancesFolder.fsName);
+        }
+    }
+    var instanceFolder = new Folder(instancesFolder.fsName + "/" + getBridgeInstanceId());
+    if (!instanceFolder.exists) {
+        if (!instanceFolder.create()) {
+            throw new Error("Unable to create instance folder: " + instanceFolder.fsName);
+        }
+    }
+    return instanceFolder;
+}
+
 // Command file path - use Documents folder for reliable access
 function getCommandFilePath() {
-    var bridgeFolder = ensureBridgeFolder();
-    return bridgeFolder.fsName + "/ae_command.json";
+    var instanceFolder = ensureInstanceFolder();
+    return instanceFolder.fsName + "/ae_command.json";
 }
 
 // Result file path - use Documents folder for reliable access
 function getResultFilePath() {
-    var bridgeFolder = ensureBridgeFolder();
-    return bridgeFolder.fsName + "/ae_mcp_result.json";
+    var instanceFolder = ensureInstanceFolder();
+    return instanceFolder.fsName + "/ae_mcp_result.json";
+}
+
+function getHeartbeatFilePath() {
+    var instanceFolder = ensureInstanceFolder();
+    return instanceFolder.fsName + "/heartbeat.json";
+}
+
+function getDebugConfigFilePath() {
+    return getBridgeFolderPath() + "/ae_mcp_debug_config.json";
+}
+
+function getDefaultDebugLogFilePath() {
+    try {
+        if ($.os && $.os.toLowerCase().indexOf("windows") >= 0) {
+            var installedRoot = new Folder("C:/Program Files/AfterEffectsMcp");
+            if (installedRoot.exists) {
+                return installedRoot.fsName + "/ae_mcp_debug.log";
+            }
+        }
+    } catch (_osErr) {}
+    return getBridgeFolderPath() + "/ae_mcp_debug.log";
+}
+
+function getDebugLogFilePath() {
+    if (debugLogPathOverride && debugLogPathOverride !== "") {
+        return debugLogPathOverride;
+    }
+    return getDefaultDebugLogFilePath();
+}
+
+function readDebugLogConfig() {
+    var config = {
+        enabled: false,
+        logPath: getDefaultDebugLogFilePath()
+    };
+    try {
+        var configFile = new File(getDebugConfigFilePath());
+        configFile.encoding = "UTF-8";
+        if (!configFile.exists) {
+            return config;
+        }
+        if (!configFile.open("r")) {
+            return config;
+        }
+        var raw = configFile.read();
+        configFile.close();
+        if (!raw) {
+            return config;
+        }
+        var parsed = JSON.parse(raw);
+        if (parsed) {
+            config.enabled = parsed.enabled === true;
+            if (parsed.logPath && typeof parsed.logPath === "string") {
+                config.logPath = parsed.logPath;
+            }
+        }
+    } catch (_e) {}
+    return config;
+}
+
+function writeDebugLogConfig(enabled, logPath) {
+    try {
+        ensureBridgeFolder();
+        var configFile = new File(getDebugConfigFilePath());
+        configFile.encoding = "UTF-8";
+        if (configFile.open("w")) {
+            configFile.write(JSON.stringify({
+                enabled: enabled === true,
+                logPath: logPath || getDefaultDebugLogFilePath()
+            }, null, 2));
+            configFile.close();
+        }
+    } catch (_e) {}
+}
+
+function applyDebugLogConfig(config) {
+    config = config || readDebugLogConfig();
+    debugLogEnabled = config.enabled === true;
+    debugLogPathOverride = config.logPath || getDefaultDebugLogFilePath();
+    try {
+        if (isControlValid(debugLogCheckbox)) {
+            debugLogCheckbox.value = debugLogEnabled;
+        }
+    } catch (_e) {}
+}
+
+function setDebugLogEnabled(enabled) {
+    debugLogEnabled = enabled === true;
+    if (!debugLogPathOverride) {
+        debugLogPathOverride = getDefaultDebugLogFilePath();
+    }
+    writeDebugLogConfig(debugLogEnabled, debugLogPathOverride);
+}
+
+function resetDebugLogFileForSession() {
+    if (!debugLogEnabled) {
+        return;
+    }
+    try {
+        var logFile = new File(getDebugLogFilePath());
+        logFile.encoding = "UTF-8";
+        try {
+            if (logFile.parent && !logFile.parent.exists) {
+                logFile.parent.create();
+            }
+        } catch (_parentErr) {}
+        if (logFile.exists) {
+            logFile.remove();
+        }
+        if (logFile.open("w")) {
+            logFile.close();
+        }
+    } catch (_e) {}
+}
+
+function appendDebugLog(message) {
+    if (!debugLogEnabled) {
+        return;
+    }
+    try {
+        var logPath = getDebugLogFilePath();
+        var logFile = new File(logPath);
+        logFile.encoding = "UTF-8";
+        try {
+            if (logFile.parent && !logFile.parent.exists) {
+                logFile.parent.create();
+            }
+        } catch (_parentErr) {}
+        if (logFile.open("a")) {
+            logFile.writeln(fxDateToIsoString(new Date()) + " " + message);
+            logFile.close();
+        }
+    } catch (_e) {}
+}
+
+function getProjectPathForHeartbeat() {
+    try {
+        if (app.project && app.project.file) {
+            return app.project.file.fsName;
+        }
+    } catch (_e) {}
+    return "";
+}
+
+function getBridgeInstanceStatus() {
+    if (currentRequestId) {
+        return "running";
+    }
+    try {
+        if (isControlValid(autoRunCheckbox) && !autoRunCheckbox.value) {
+            return "paused";
+        }
+    } catch (_e) {}
+    return "idle";
+}
+
+function getAeInstanceMetadata() {
+    var bridgeRoot = ensureBridgeFolder().fsName;
+    return {
+        instanceId: getBridgeInstanceId(),
+        appName: "After Effects",
+        appVersion: (app && app.version) ? String(app.version) : "",
+        displayName: "Adobe After Effects " + ((app && app.version) ? String(app.version) : ""),
+        projectPath: getProjectPathForHeartbeat(),
+        status: getBridgeInstanceStatus(),
+        currentRequestId: currentRequestId || null,
+        currentCommandName: currentCommandName || null,
+        bridgeRoot: bridgeRoot,
+        commandFile: getCommandFilePath(),
+        resultFile: getResultFilePath(),
+        lastHeartbeatAt: fxDateToIsoString(new Date())
+    };
+}
+
+function writeInstanceHeartbeat() {
+    try {
+        var heartbeatFile = new File(getHeartbeatFilePath());
+        heartbeatFile.encoding = "UTF-8";
+        if (heartbeatFile.open("w")) {
+            heartbeatFile.write(JSON.stringify(getAeInstanceMetadata(), null, 2));
+            heartbeatFile.close();
+        }
+    } catch (heartbeatError) {
+        logToPanel("Failed to write instance heartbeat: " + heartbeatError.toString());
+    }
 }
 
 function hasFileNetworkAccessPermission() {
@@ -2833,9 +3078,119 @@ function getLayerInfo() {
 }
 
 // Execute command
-function executeCommand(command, args) {
+function fxMakeJsonSafe(value) {
+    if (typeof value === "undefined") {
+        return null;
+    }
+    try {
+        return JSON.parse(JSON.stringify(value));
+    } catch (_jsonErr) {
+        return fxSerializeValue(value);
+    }
+}
+
+function executeJsx(args) {
+    var description = "";
+    var undoStarted = false;
+    try {
+        args = args || {};
+        var code = args.code;
+        var mode = args.mode;
+        description = args.description || "";
+        if (mode !== "unsafe") {
+            throw new Error("executeJsx requires mode='unsafe'");
+        }
+        if (!description) {
+            throw new Error("executeJsx requires a non-empty description");
+        }
+        if (!code || typeof code !== "string") {
+            throw new Error("executeJsx requires string code");
+        }
+
+        var userArgs = args.args || {};
+        var sourcePath = args.sourcePath || "";
+        var mcp = {
+            log: function (message) {
+                logToPanel("[executeJsx] " + message);
+            },
+            shouldCancel: function () {
+                return false;
+            }
+        };
+
+        logToPanel("executeJsx started: " + description + (sourcePath ? " (" + sourcePath + ")" : ""));
+        app.beginUndoGroup(description);
+        undoStarted = true;
+        var result = (function (args, mcp) {
+            return eval(code);
+        })(userArgs, mcp);
+
+        if (undoStarted) {
+            app.endUndoGroup();
+            undoStarted = false;
+        }
+        logToPanel("executeJsx completed: " + description);
+        return JSON.stringify({
+            status: "success",
+            description: description,
+            sourcePath: sourcePath,
+            result: fxMakeJsonSafe(result)
+        }, null, 2);
+    } catch (error) {
+        if (undoStarted) {
+            try {
+                app.endUndoGroup();
+            } catch (_undoErr) {}
+        }
+        logToPanel("executeJsx error: " + error.toString());
+        return JSON.stringify({
+            status: "error",
+            description: description,
+            message: error.toString(),
+            line: error.line,
+            fileName: error.fileName
+        }, null, 2);
+    }
+}
+
+function executeJsxFile(args) {
+    try {
+        args = args || {};
+        var path = args.path || "";
+        if (!path) {
+            throw new Error("executeJsxFile requires path");
+        }
+        var file = new File(path);
+        file.encoding = "UTF-8";
+        if (!file.exists) {
+            throw new Error("JSX file not found: " + path);
+        }
+        if (!file.open("r")) {
+            throw new Error("Unable to open JSX file: " + path);
+        }
+        var code = file.read();
+        file.close();
+        args.code = code;
+        args.sourcePath = file.fsName;
+        return executeJsx(args);
+    } catch (error) {
+        logToPanel("executeJsxFile error: " + error.toString());
+        return JSON.stringify({
+            status: "error",
+            message: error.toString(),
+            line: error.line,
+            fileName: error.fileName
+        }, null, 2);
+    }
+}
+
+function executeCommand(command, args, requestId) {
     var result = "";
     var shouldQuitAfterWrite = false;
+    requestId = requestId || "";
+    currentRequestId = requestId;
+    currentCommandName = command;
+    writeInstanceHeartbeat();
     
     logToPanel("Executing command: " + command);
     setStatus("Running: " + command);
@@ -2845,6 +3200,16 @@ function executeCommand(command, args) {
         logToPanel("Attempting to execute: " + command); // Log before switch
         // Use a switch statement for clarity
         switch (command) {
+            case "executeJsx":
+                logToPanel("Calling executeJsx function...");
+                result = executeJsx(args);
+                logToPanel("Returned from executeJsx.");
+                break;
+            case "executeJsxFile":
+                logToPanel("Calling executeJsxFile function...");
+                result = executeJsxFile(args);
+                logToPanel("Returned from executeJsxFile.");
+                break;
             case "getProjectInfo":
                 result = getProjectInfo();
                 break;
@@ -3025,12 +3390,20 @@ function executeCommand(command, args) {
             // Add a timestamp to help identify if we're getting fresh results
             resultObj._responseTimestamp = fxDateToIsoString(new Date());
             resultObj._commandExecuted = command;
+            resultObj._requestId = requestId;
+            resultObj._aeInstance = getAeInstanceMetadata();
             resultString = JSON.stringify(resultObj, null, 2);
             logToPanel("Added timestamp to result JSON for tracking freshness.");
         } catch (parseError) {
-            // If it's not valid JSON, append the timestamp as a comment
             logToPanel("Could not parse result as JSON to add timestamp: " + parseError.toString());
-            // We'll still continue with the original string
+            resultString = JSON.stringify({
+                status: "success",
+                result: resultString,
+                _responseTimestamp: fxDateToIsoString(new Date()),
+                _commandExecuted: command,
+                _requestId: requestId,
+                _aeInstance: getAeInstanceMetadata()
+            }, null, 2);
         }
         
         var resultFile = new File(getResultFilePath());
@@ -3062,6 +3435,9 @@ function executeCommand(command, args) {
         logToPanel("Updating command status to completed...");
         updateCommandStatus("completed");
         logToPanel("Command status updated.");
+        currentRequestId = "";
+        currentCommandName = "";
+        writeInstanceHeartbeat();
 
         if (shouldQuitAfterWrite) {
             try {
@@ -3092,6 +3468,10 @@ function executeCommand(command, args) {
             var errorResult = JSON.stringify({ 
                 status: "error", 
                 command: command,
+                _commandExecuted: command,
+                _requestId: requestId,
+                _aeInstance: getAeInstanceMetadata(),
+                _responseTimestamp: fxDateToIsoString(new Date()),
                 message: error.toString(),
                 line: error.line,
                 fileName: error.fileName
@@ -3113,6 +3493,9 @@ function executeCommand(command, args) {
         logToPanel("Updating command status to error...");
         updateCommandStatus("error");
         logToPanel("Command status updated to error.");
+        currentRequestId = "";
+        currentCommandName = "";
+        writeInstanceHeartbeat();
     }
 }
 
@@ -3142,6 +3525,7 @@ function updateCommandStatus(status) {
 // Log message to panel
 function logToPanel(message) {
     var timestamp = new Date().toLocaleTimeString();
+    appendDebugLog(message);
     try {
         if (!isControlValid(logText)) {
             return;
@@ -3153,13 +3537,22 @@ function logToPanel(message) {
 // Check for new commands
 function checkForCommands() {
     if (!isControlValid(autoRunCheckbox) || !isControlValid(checkButton)) {
+        logCommandCheckerState("invalid-controls", "Command checker stopped: panel controls are invalid.");
         stopCommandChecker();
         return;
     }
-    if (isChecking) return;
-    if (!refreshPermissionState(false)) return;
+    if (isChecking) {
+        logCommandCheckerState("already-checking", "Command checker skipped: previous check is still running.");
+        return;
+    }
+    if (!refreshPermissionState(false)) {
+        logCommandCheckerState("permission-missing", "Command checker paused: file/network permission is missing.");
+        return;
+    }
+    writeInstanceHeartbeat();
     if (!autoRunCheckbox.value) {
         setStatus("Ready - Auto-run is OFF");
+        logCommandCheckerState("auto-run-off", "Command checker paused: Auto-run commands is OFF.");
         return;
     }
     
@@ -3179,13 +3572,26 @@ function checkForCommands() {
                 
                 // Only execute pending commands
                 if (commandData.status === "pending") {
+                    logCommandCheckerState(
+                        "pending:" + commandData.command,
+                        "Command checker picked pending command: " + commandData.command
+                    );
                     // Update status to running
                     updateCommandStatus("running");
                     
                     // Execute the command
-                    executeCommand(commandData.command, commandData.args || {});
+                    executeCommand(commandData.command, commandData.args || {}, commandData.requestId || "");
+                } else {
+                    logCommandCheckerState(
+                        "status:" + commandData.status + ":" + commandData.command,
+                        "Command checker saw command status=" + commandData.status + " command=" + commandData.command
+                    );
                 }
+            } else {
+                logCommandCheckerState("empty-command-file", "Command checker saw an empty command file.");
             }
+        } else {
+            logCommandCheckerState("no-command-file", "Command checker waiting: command file does not exist.");
         }
     } catch (e) {
         logToPanel("Error checking for commands: " + e.toString());
@@ -3198,16 +3604,28 @@ function checkForCommands() {
 function startCommandChecker() {
     stopCommandChecker();
     commandCheckerTaskId = app.scheduleTask("checkForCommands()", checkInterval, true);
+    logToPanel("Command checker scheduled. taskId=" + commandCheckerTaskId + " intervalMs=" + checkInterval);
 }
 
 function stopCommandChecker() {
     if (!commandCheckerTaskId) {
         return;
     }
+    logToPanel("Stopping command checker. taskId=" + commandCheckerTaskId);
     try {
         app.cancelTask(commandCheckerTaskId);
     } catch (_e) {}
     commandCheckerTaskId = 0;
+}
+
+applyDebugLogConfig(readDebugLogConfig());
+resetDebugLogFileForSession();
+
+try {
+    $.global.checkForCommands = checkForCommands;
+    logToPanel("Registered checkForCommands on $.global for scheduleTask.");
+} catch (globalRegisterError) {
+    logToPanel("Failed to register checkForCommands on $.global: " + globalRegisterError.toString());
 }
 
 // Add manual check button
@@ -3220,11 +3638,24 @@ checkButton.onClick = function() {
     checkForCommands();
 };
 
+debugLogCheckbox.onClick = function() {
+    setDebugLogEnabled(debugLogCheckbox.value === true);
+    logToPanel(
+        "Debug file logging " +
+        (debugLogEnabled ? "enabled: " + getDebugLogFilePath() : "disabled")
+    );
+};
+
 // Log startup
+writeInstanceHeartbeat();
 logToPanel("MCP Bridge Auto started");
 logToPanel("UI mode: " + (isDockablePanel ? "dockable panel" : "floating window"));
 try {
+    logToPanel("AE instance: " + getBridgeInstanceId());
     logToPanel("Command file: " + getCommandFilePath());
+    logToPanel("Heartbeat file: " + getHeartbeatFilePath());
+    logToPanel("Debug file logging: " + (debugLogEnabled ? "ON" : "OFF"));
+    logToPanel("Debug log file: " + getDebugLogFilePath());
 } catch (pathError) {
     logToPanel("Command file path unavailable: " + pathError.toString());
 }
@@ -3235,6 +3666,12 @@ startCommandChecker();
 
 panel.onClose = function () {
     stopCommandChecker();
+    try {
+        var heartbeatFile = new File(getHeartbeatFilePath());
+        if (heartbeatFile.exists) {
+            heartbeatFile.remove();
+        }
+    } catch (_heartbeatCloseErr) {}
     return true;
 };
 

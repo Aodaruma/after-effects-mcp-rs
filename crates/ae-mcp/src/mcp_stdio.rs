@@ -6,11 +6,22 @@ use mcp_core::{
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 use std::fs;
+use std::io::{BufRead as StdBufRead, BufReader as StdBufReader, Write as StdWrite};
+use std::net::TcpStream;
 use std::time::Duration;
 use tokio::io::{
     AsyncBufRead, AsyncBufReadExt, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader,
 };
 use tracing::{debug, error, info};
+
+const MAX_JSX_BYTES: usize = 1_048_576;
+
+#[derive(Debug, Deserialize)]
+struct DaemonResponse {
+    ok: bool,
+    value: Option<Value>,
+    error: Option<String>,
+}
 
 #[derive(Debug, Clone, Copy)]
 enum MessageFormat {
@@ -157,7 +168,7 @@ fn prompts_get_result(params: &Value) -> Result<Value> {
     prompt_messages(name, &args).ok_or_else(|| anyhow!("unknown prompt: {name}"))
 }
 
-fn resources_read_result(cfg: &AppConfig, bridge: &BridgeClient, params: &Value) -> Result<Value> {
+fn resources_read_result(cfg: &AppConfig, _bridge: &BridgeClient, params: &Value) -> Result<Value> {
     let uri = params
         .get("uri")
         .and_then(Value::as_str)
@@ -167,13 +178,20 @@ fn resources_read_result(cfg: &AppConfig, bridge: &BridgeClient, params: &Value)
         return Err(anyhow!("unknown resource URI: {uri}"));
     }
 
-    bridge.clear_results_file()?;
-    bridge.write_command_file("listCompositions", json!({}))?;
-    let text = bridge.wait_for_bridge_result(
-        Some("listCompositions"),
-        Duration::from_millis(cfg.result_timeout_ms + 1_000),
-        Duration::from_millis(cfg.poll_interval_ms),
+    let outcome = call_daemon(
+        cfg,
+        json!({
+            "op": "runCommand",
+            "command": "listCompositions",
+            "args": {},
+            "timeoutMs": cfg.result_timeout_ms + 1_000,
+            "pollIntervalMs": cfg.poll_interval_ms,
+            "retentionSeconds": cfg.result_retention_seconds
+        }),
+        cfg.result_timeout_ms + 1_000,
     )?;
+    let text = serde_json::to_string_pretty(&outcome)
+        .with_context(|| "failed to serialize resource result")?;
 
     Ok(json!({
         "contents": [
@@ -214,6 +232,10 @@ fn dispatch_tool_inner(
     args: Value,
 ) -> Result<Value> {
     match name {
+        "run-jsx" => run_jsx_tool(cfg, bridge, args),
+        "run-jsx-file" => run_jsx_file_tool(cfg, bridge, args),
+        "get-jsx-result" => get_jsx_result_tool(cfg, args),
+        "list-ae-instances" => list_ae_instances_tool(cfg),
         "run-script" => {
             let script = args
                 .get("script")
@@ -233,8 +255,26 @@ fn dispatch_tool_inner(
             )))
         }
         "get-results" => {
-            let text = bridge.read_results_with_stale_warning(Duration::from_secs(30))?;
-            Ok(tool_text(text))
+            if let Some(request_id) = args.get("requestId").and_then(Value::as_str) {
+                let value = call_daemon(
+                    cfg,
+                    json!({
+                        "op": "getResult",
+                        "requestId": request_id
+                    }),
+                    cfg.result_timeout_ms,
+                )?;
+                Ok(tool_json(value)?)
+            } else {
+                let value = call_daemon(
+                    cfg,
+                    json!({
+                        "op": "latestResult"
+                    }),
+                    cfg.result_timeout_ms,
+                )?;
+                Ok(tool_json(value)?)
+            }
         }
         "get-help" => Ok(tool_text(general_help_text().to_string())),
         "create-composition" => {
@@ -322,16 +362,15 @@ fn dispatch_tool_inner(
             ))
         }
         "save-frame-png" => {
-            let comp_target = format_comp_target(&args);
-            let output_path = args
-                .get("outputPath")
-                .and_then(Value::as_str)
-                .unwrap_or("unknown")
-                .to_string();
-            bridge.write_command_file("saveFramePng", args)?;
-            Ok(tool_text(format!(
-                "Command to save PNG frame from {comp_target} has been queued.\nOutput: {output_path}\nUse the \"get-results\" tool after a few seconds to check for confirmation."
-            )))
+            let timeout_ms = timeout_ms_from_args(cfg, &args);
+            run_direct_bridge_call_with_timeout(
+                cfg,
+                bridge,
+                "saveFramePng",
+                args,
+                "Error saving PNG frame",
+                timeout_ms,
+            )
         }
         "render-queue-add" => {
             let comp_target = format_comp_target(&args);
@@ -409,15 +448,16 @@ fn dispatch_tool_inner(
             ))
         }
         "cleanup-preview-folder" => {
-            let folder_path = args
-                .get("folderPath")
-                .and_then(Value::as_str)
-                .unwrap_or("unknown")
-                .to_string();
-            bridge.write_command_file("cleanupPreviewFolder", args)?;
-            Ok(tool_text(format!(
-                "Command to clean up preview folder has been queued.\nFolder: {folder_path}\nUse the \"get-results\" tool after a few seconds to check for confirmation."
-            )))
+            let timeout_ms = timeout_ms_from_args(cfg, &args);
+            run_daemon_command(
+                cfg,
+                "cleanupPreviewFolder",
+                args.clone(),
+                &args,
+                timeout_ms,
+                true,
+                "Error cleaning up preview folder",
+            )
         }
         "set-suppress-dialogs" => {
             bridge.write_command_file("setSuppressDialogs", args)?;
@@ -531,14 +571,13 @@ fn dispatch_tool_inner(
             )
         }
         "mcp_aftereffects_get_effects_help" => Ok(tool_text(effects_help_text().to_string())),
-        "run-bridge-test" => {
-            bridge.clear_results_file()?;
-            bridge.write_command_file("bridgeTestEffects", json!({}))?;
-            Ok(tool_text(
-                "Bridge test effects command has been queued.\nPlease ensure the \"MCP Bridge Auto\" panel is open in After Effects.\nUse the \"get-results\" tool after a few seconds to check for the test results."
-                    .to_string(),
-            ))
-        }
+        "run-bridge-test" => run_direct_bridge_call(
+            cfg,
+            bridge,
+            "bridgeTestEffects",
+            json!({}),
+            "Error running bridge test",
+        ),
         _ => Ok(tool_error(format!("Unknown tool: {name}"))),
     }
 }
@@ -582,17 +621,242 @@ fn run_direct_bridge_call(
     args: Value,
     error_prefix: &str,
 ) -> Result<Value> {
-    bridge.clear_results_file()?;
-    bridge.write_command_file(command, args)?;
-    let result = bridge.wait_for_bridge_result(
-        Some(command),
-        Duration::from_millis(cfg.result_timeout_ms),
-        Duration::from_millis(cfg.poll_interval_ms),
-    );
-    match result {
-        Ok(text) => Ok(tool_text(text)),
-        Err(e) => Ok(tool_error(format!("{error_prefix}: {e}"))),
+    run_direct_bridge_call_with_timeout(
+        cfg,
+        bridge,
+        command,
+        args,
+        error_prefix,
+        cfg.result_timeout_ms,
+    )
+}
+
+fn run_direct_bridge_call_with_timeout(
+    cfg: &AppConfig,
+    _bridge: &BridgeClient,
+    command: &str,
+    args: Value,
+    error_prefix: &str,
+    timeout_ms: u64,
+) -> Result<Value> {
+    run_daemon_command(
+        cfg,
+        command,
+        args.clone(),
+        &args,
+        timeout_ms,
+        false,
+        error_prefix,
+    )
+}
+
+fn run_jsx_tool(cfg: &AppConfig, _bridge: &BridgeClient, args: Value) -> Result<Value> {
+    let code = required_non_empty_string(&args, "code")?;
+    validate_unsafe_mode(&args)?;
+    let description = required_non_empty_string(&args, "description")?;
+    validate_jsx_size(code)?;
+
+    let payload = json!({
+        "code": code,
+        "args": args.get("args").cloned().unwrap_or_else(|| json!({})),
+        "mode": "unsafe",
+        "description": description,
+    });
+    let timeout_ms = timeout_ms_from_args(cfg, &args);
+
+    run_daemon_command(
+        cfg,
+        "executeJsx",
+        payload,
+        &args,
+        timeout_ms,
+        false,
+        "Error running JSX",
+    )
+}
+
+fn run_jsx_file_tool(cfg: &AppConfig, _bridge: &BridgeClient, args: Value) -> Result<Value> {
+    let path = required_non_empty_string(&args, "path")?;
+    validate_unsafe_mode(&args)?;
+    let description = required_non_empty_string(&args, "description")?;
+    let code =
+        fs::read_to_string(path).with_context(|| format!("failed to read JSX file: {path}"))?;
+    validate_jsx_size(&code)?;
+
+    let payload = json!({
+        "code": code,
+        "args": args.get("args").cloned().unwrap_or_else(|| json!({})),
+        "mode": "unsafe",
+        "description": description,
+        "sourcePath": path,
+    });
+    let timeout_ms = timeout_ms_from_args(cfg, &args);
+
+    run_daemon_command(
+        cfg,
+        "executeJsx",
+        payload,
+        &args,
+        timeout_ms,
+        false,
+        "Error running JSX file",
+    )
+}
+
+fn get_jsx_result_tool(cfg: &AppConfig, args: Value) -> Result<Value> {
+    let request_id = required_non_empty_string(&args, "requestId")?;
+    let value = call_daemon(
+        cfg,
+        json!({
+            "op": "getResult",
+            "requestId": request_id
+        }),
+        cfg.result_timeout_ms,
+    )?;
+    Ok(tool_json(value)?)
+}
+
+fn list_ae_instances_tool(cfg: &AppConfig) -> Result<Value> {
+    let value = call_daemon(
+        cfg,
+        json!({
+            "op": "listInstances"
+        }),
+        cfg.result_timeout_ms,
+    )?;
+    Ok(tool_json(value)?)
+}
+
+fn run_daemon_command(
+    cfg: &AppConfig,
+    command: &str,
+    command_args: Value,
+    option_args: &Value,
+    timeout_ms: u64,
+    global_exclusive: bool,
+    error_prefix: &str,
+) -> Result<Value> {
+    let retention_seconds = option_args
+        .get("resultRetentionSeconds")
+        .and_then(Value::as_u64)
+        .unwrap_or(cfg.result_retention_seconds);
+    if retention_seconds == 0 {
+        anyhow::bail!("resultRetentionSeconds must be greater than 0");
     }
+    if retention_seconds > cfg.result_retention_max_seconds {
+        anyhow::bail!(
+            "resultRetentionSeconds exceeds the configured maximum: {} > {}",
+            retention_seconds,
+            cfg.result_retention_max_seconds
+        );
+    }
+
+    let daemon_value = call_daemon(
+        cfg,
+        json!({
+            "op": "runCommand",
+            "command": command,
+            "args": command_args,
+            "targetInstanceId": option_args.get("targetInstanceId").cloned().unwrap_or(Value::Null),
+            "targetVersion": option_args.get("targetVersion").cloned().unwrap_or(Value::Null),
+            "timeoutMs": timeout_ms,
+            "pollIntervalMs": cfg.poll_interval_ms,
+            "retentionSeconds": retention_seconds,
+            "globalExclusive": global_exclusive
+        }),
+        timeout_ms,
+    );
+
+    match daemon_value {
+        Ok(value) => Ok(tool_json(value)?),
+        Err(error) => Ok(tool_error(format!("{error_prefix}: {error}"))),
+    }
+}
+
+fn call_daemon(cfg: &AppConfig, request: Value, timeout_ms: u64) -> Result<Value> {
+    let mut stream = TcpStream::connect(&cfg.daemon_addr).with_context(|| {
+        format!(
+            "failed to connect to ae-mcp daemon at {}. Start it with `ae-mcp serve-daemon` or install/start the service.",
+            cfg.daemon_addr
+        )
+    })?;
+    let io_timeout = Duration::from_millis(timeout_ms.saturating_add(2_000).max(5_000));
+    stream
+        .set_read_timeout(Some(io_timeout))
+        .with_context(|| "failed to set daemon read timeout")?;
+    stream
+        .set_write_timeout(Some(Duration::from_secs(5)))
+        .with_context(|| "failed to set daemon write timeout")?;
+
+    let raw =
+        serde_json::to_string(&request).with_context(|| "failed to serialize daemon request")?;
+    stream
+        .write_all(raw.as_bytes())
+        .with_context(|| "failed to write daemon request")?;
+    stream
+        .write_all(b"\n")
+        .with_context(|| "failed to terminate daemon request")?;
+    stream
+        .flush()
+        .with_context(|| "failed to flush daemon request")?;
+
+    let mut reader = StdBufReader::new(stream);
+    let mut line = String::new();
+    reader
+        .read_line(&mut line)
+        .with_context(|| "failed to read daemon response")?;
+    if line.trim().is_empty() {
+        anyhow::bail!("daemon returned an empty response");
+    }
+
+    let response: DaemonResponse =
+        serde_json::from_str(line.trim()).with_context(|| "failed to parse daemon response")?;
+    if response.ok {
+        response
+            .value
+            .ok_or_else(|| anyhow!("daemon response did not include value"))
+    } else {
+        Err(anyhow!(
+            "{}",
+            response
+                .error
+                .unwrap_or_else(|| "daemon request failed".to_string())
+        ))
+    }
+}
+
+fn required_non_empty_string<'a>(args: &'a Value, key: &str) -> Result<&'a str> {
+    args.get(key)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| anyhow!("'{key}' is required and must be a non-empty string"))
+}
+
+fn validate_unsafe_mode(args: &Value) -> Result<()> {
+    let mode = required_non_empty_string(args, "mode")?;
+    if mode != "unsafe" {
+        anyhow::bail!("only mode='unsafe' is currently supported for JSX execution");
+    }
+    Ok(())
+}
+
+fn validate_jsx_size(code: &str) -> Result<()> {
+    if code.len() > MAX_JSX_BYTES {
+        anyhow::bail!(
+            "JSX code is too large: {} bytes > {} bytes",
+            code.len(),
+            MAX_JSX_BYTES
+        );
+    }
+    Ok(())
+}
+
+fn timeout_ms_from_args(cfg: &AppConfig, args: &Value) -> u64 {
+    args.get("timeoutMs")
+        .and_then(Value::as_u64)
+        .filter(|value| *value > 0)
+        .unwrap_or(cfg.result_timeout_ms)
 }
 
 fn create_test_animation_script(args: Value) -> Result<Value> {
@@ -667,6 +931,12 @@ fn tool_text(text: String) -> Value {
             }
         ]
     })
+}
+
+fn tool_json(value: Value) -> Result<Value> {
+    let text =
+        serde_json::to_string_pretty(&value).with_context(|| "failed to serialize tool JSON")?;
+    Ok(tool_text(text))
 }
 
 fn tool_error(text: String) -> Value {
@@ -810,7 +1080,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn tools_list_contains_run_script() {
+    fn tools_list_contains_run_jsx() {
         let result = tools_list_result();
         let tools = result
             .get("tools")
@@ -818,7 +1088,7 @@ mod tests {
             .expect("tools array");
         assert!(tools
             .iter()
-            .any(|t| t.get("name").and_then(Value::as_str) == Some("run-script")));
+            .any(|t| t.get("name").and_then(Value::as_str) == Some("run-jsx")));
     }
 
     #[test]

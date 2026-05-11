@@ -6,196 +6,155 @@
 ![Platform](https://img.shields.io/badge/platform-After%20Effects-blue)
 
 Adobe After Effects 向けの Rust 製 MCP サーバーです。  
-`mcp-bridge-auto.jsx` パネルとファイルブリッジ（`ae_command.json` / `ae_mcp_result.json`）で AE と連携します。
+`ae-mcp serve-daemon` をローカル broker として使い、`mcp-bridge-auto.jsx` パネル経由で AE と連携します。
+開いているAEパネルは `~/Documents/ae-mcp-bridge/instances/<instanceId>/` にインスタンスとして登録されます。
 
 - English: [README.md](README.md)
 
 ## 0. 目次
 
-- [1. フォーク元からの改善点](#1-フォーク元からの改善点)
-- [2. 機能](#2-機能)
-  - [2.1 コンポジション関連](#21-コンポジション関連)
-  - [2.2 レイヤー・アニメーション関連](#22-レイヤーアニメーション関連)
-  - [2.3 エフェクト適用と調査](#23-エフェクト適用と調査)
-  - [2.4 運用・配布](#24-運用配布)
+- [1. このフォークの目的](#1-このフォークの目的)
+- [2. 仕組み](#2-仕組み)
+  - [2.1 MCPサーバーの役割](#21-mcpサーバーの役割)
+  - [2.2 JSX中心のtool設計](#22-jsx中心のtool設計)
+  - [2.3 実行モデル](#23-実行モデル)
 - [3. セットアップ](#3-セットアップ)
-  - [3.1 インストール方法（ユーザー向け）](#31-インストール方法ユーザー向け)
-    - [3.1-A バイナリを取得](#31-a-バイナリを取得)
-    - [3.1-B AE ブリッジパネルを配置](#31-b-ae-ブリッジパネルを配置)
-    - [3.1-C After Effects 側を設定](#31-c-after-effects-側を設定)
-    - [3.1-D MCP サーバーを登録](#31-d-mcp-サーバーを登録)
-  - [3.2 Development setup（開発者向け）](#32-development-setup開発者向け)
-    - [3.2-A 前提](#32-a-前提)
-    - [3.2-B ビルド](#32-b-ビルド)
-    - [3.2-C スクリプトで AE ブリッジ導入](#32-c-スクリプトで-ae-ブリッジ導入)
-    - [3.2-D After Effects 側の設定](#32-d-after-effects-側の設定)
-    - [3.2-E MCP サーバー登録](#32-e-mcp-サーバー登録)
+  - [3.1 クイックセットアップ](#31-クイックセットアップ)
+  - [3.2 インストール補足](#32-インストール補足)
+  - [3.3 開発者向けセットアップ](#33-開発者向けセットアップ)
 - [4. クイック動作確認](#4-クイック動作確認)
 - [5. 使用例](#5-使用例)
 - [6. 利用可能な MCP ツール](#6-利用可能な-mcp-ツール)
 - [7. トラブルシュート](#7-トラブルシュート)
-- [8. ドキュメント](#8-ドキュメント)
-- [9. ライセンス](#9-ライセンス)
+- [8. 設定](#8-設定)
+- [9. ドキュメント](#9-ドキュメント)
+- [10. ライセンス](#10-ライセンス)
 
-## 1. フォーク元からの改善点
+## 1. このフォークの目的
 
-- 実行基盤を Node.js/TypeScript から Rust（`ae-mcp`）へ移行
-- 実行・導入フローから npm/yarn 依存を削減
-- `compId/layerId` 指定を追加し、index ずれによる誤適用リスクを低減
-- エフェクト調査機能を追加
-  - `list-supported-effects`
-  - `describe-effect`
-- ExtendScript 互換性を改善（旧エンジンでの `Object.keys` 依存を排除）
-- `mcp-bridge-auto.jsx` を強化
-  - Dockable panel 対応
-  - 権限未許可時のUI状態管理
-  - モーダルダイアログ衝突時の再試行制御
-- Windows/macOS のパッケージングと Release 自動化を整備
+このフォークは、After Effects の自動化をインストールしやすく、運用しやすく、LLM から扱いやすくするために作成しました。フォーク元の TypeScript 実装は動作していましたが、Node.js ランタイムが必要で、細かい用途別 tool が多く、単一の command/result ファイルに依存していたため、導入や同時利用の見通しが悪くなりやすい構成でした。
 
-## 2. 機能
+Rust 版では、AE 側の `mcp-bridge-auto.jsx` パネルを使う方針は残しつつ、実行基盤を単一の `ae-mcp` バイナリへ移行しています。`serve-daemon` がローカルの調停プロセスとして AE 実行を管理し、`serve-stdio` は MCP クライアントとの通信に集中します。これにより、LLM へ見せる MCP 経路と AE 実行制御を分離しています。
 
-### 2.1 コンポジション関連
+主な改善点は、Rust 単体での配布、daemon 経由の request routing、AE instance ごとの FIFO 実行、`requestId` による結果保持と再確認、AE instance 一覧取得、そして JSX 中心の小さな tool 構成です。ブリッジ側も dockable panel、ファイル/ネットワーク権限の検知、モーダルダイアログ時の再試行、ExtendScript 互換性、debug log に対応しています。
 
-- 幅・高さ・duration・framerate・背景色を指定したコンポジション作成
-- コンポジション一覧取得、プロジェクト情報取得
-- 旧 TS サーバーからの tool/resource/prompt 名互換を重視
+## 2. 仕組み
 
-### 2.2 レイヤー・アニメーション関連
+### 2.1 MCPサーバーの役割
 
-- テキスト・シェイプ・ソリッド/調整レイヤーの作成
-- レイヤープロパティ更新
-- キーフレーム/エクスプレッション設定
-- ターゲット指定方法:
-  - `compId/layerId`（推奨）
-  - `compName/layerName`
-  - `compIndex/layerIndex`
+このプロジェクトは、After Effects 操作を Model Context Protocol 経由で LLM に提供します。MCP クライアントは `ae-mcp serve-stdio` に接続し、`serve-stdio` が公開 tool の呼び出しを受け付けます。実際の AE 実行は `ae-mcp serve-daemon` に渡されます。
 
-### 2.3 エフェクト適用と調査
+daemon は、起動中の AE bridge panel を監視し、どの AE instance で実行するかを決め、request を queue に入れ、対象 panel 用の command を書き込み、結果を待って registry に保持します。各 AE panel は `~/Documents/ae-mcp-bridge/instances/<instanceId>/` に登録され、heartbeat で AE version も返します。
 
-- エフェクト直接適用（`apply-effect`）とテンプレート適用（`apply-effect-template`）
-- `smooth-gradient` テンプレート（Gradient Ramp フォールバック付き）
-- `list-supported-effects`: 既知エフェクトカタログの環境可用性確認
-- `describe-effect`: エフェクトを一時適用してパラメータ情報を取得
-- ExtendScript 互換性対応（`Object.keys` 非依存）
+### 2.2 JSX中心のtool設計
 
-### 2.4 運用・配布
+現在の公開 tool は、LLM が扱いやすいように意図的に少なくしています。AE の個別操作は原則として `run-jsx` または `run-jsx-file` で実行します。任意 JSX は安全境界として扱えないため、これらの tool は `mode: "unsafe"` と `description` を必須にしています。
 
-- `serve-stdio` で MCP クライアントと接続
-- `serve-daemon` / `service` で OS サービス運用
-- Windows/macOS のパッケージングスクリプトと CI ワークフローを用意
-- インストーラー経由のブリッジ自動配置
-  - `.msi` / `.pkg` は検出した AE へ `mcp-bridge-auto.jsx` を自動配置
-  - ポータブル版（`.zip` / `.tar.gz`）は同梱 jsx を手動配置
-- このリポジトリは Rust 一本化済み（npm/TypeScript サーバーは削除済み）
+残している tool は、汎用補助または例外的に専用化したものです。
+
+- `list-ae-instances`: 起動中の AE instance と version を確認します。
+- `get-jsx-result` / `get-results`: 保持済みの実行結果を確認します。
+- `get-help`: 基本的な使い方を表示します。
+- `run-bridge-test`: ブリッジ疎通確認を行います。
+- `save-frame-png`: 1フレームの preview PNG を保存します。
+- `cleanup-preview-folder`: preview folder を掃除します。共有 folder 競合を避けるため global exclusive で実行します。
+
+コンポジション作成、レイヤー作成、エフェクト適用、エフェクト調査などは、専用 MCP tool ではなく JSX から行います。ブリッジ内には `applyEffect(args)`、`applyEffectTemplate(args)`、`listSupportedEffects(args)`、`describeEffect(args)` などの helper が用意されています。
+
+### 2.3 実行モデル
+
+daemon は request ごとに `requestId` を発行し、状態を `~/Documents/ae-mcp-bridge/registry/` に保持します。MCP 呼び出しが timeout しても AE 側の処理が継続している場合があるため、後から `get-jsx-result` で結果を確認できます。
+
+同じ AE instance 内では FIFO で順番に実行します。異なる AE instance では並列実行できます。複数の AE instance が起動している状態で target を指定しない場合は、誤実行を避けるため error になります。必要に応じて `targetInstanceId` または `targetVersion` を指定してください。
 
 ## 3. セットアップ
 
-### 3.1 インストール方法（ユーザー向け）
+### 3.1 クイックセットアップ
 
-#### 3.1-A バイナリを取得
+1. Release 版をインストールするか、source から `ae-mcp` を build します。
+2. `mcp-bridge-auto.jsx` を After Effects の `ScriptUI Panels` folder に配置します。
+3. After Effects で `Allow Scripts to Write Files and Access Network` を有効化します。
+4. AE を再起動し、`Window > mcp-bridge-auto.jsx` を開いて `Auto-run commands` を ON にします。
+5. `ae-mcp serve-daemon` を起動するか、service を install/start します。
+6. MCP クライアントに `ae-mcp serve-stdio` を登録します。
+7. `list-ae-instances` を実行し、AE が見えていることを確認します。
 
-[GitHub Releases](https://github.com/Aodaruma/after-effects-mcp-rs/releases/latest) から最新版を取得します。
+> [!NOTE]
+> `serve-stdio` 単体では AE 実行は行いません。実行系 tool を使うには、同じ設定で `serve-daemon` が起動している必要があります。
 
-- Windows:
-  - `after-effects-mcp-rs-windows-x86_64.msi`（インストーラ）
-  - `after-effects-mcp-rs-windows-x86_64.zip`（ポータブル）
-- macOS:
-  - `after-effects-mcp-rs-macos-universal.pkg`（インストーラ）
-  - `after-effects-mcp-rs-macos-universal.tar.gz`（ポータブル）
+### 3.2 インストール補足
 
-#### 3.1-B AE ブリッジパネルを配置
+最新版は [GitHub Releases](https://github.com/Aodaruma/after-effects-mcp-rs/releases/latest) から取得できます。
 
-`.msi`（Windows）または `.pkg`（macOS）で導入した場合は、インストーラーが検出した After Effects へ `mcp-bridge-auto.jsx` を自動配置します。
+- Windows: `.msi` インストーラー、または portable `.zip`
+- macOS: `.pkg` インストーラー、または portable `.tar.gz`
 
-ポータブル版（`.zip` / `.tar.gz`）を使う場合は、以下の手順で手動配置してください。
+`.msi` / `.pkg` で導入した場合、検出された After Effects に `mcp-bridge-auto.jsx` が自動配置されます。portable 版を使う場合は手動で配置してください。
 
-`mcp-bridge-auto.jsx` を以下のいずれかから取得し、配置します。
-
-- このリポジトリの `src/scripts/mcp-bridge-auto.jsx`
-- [raw ファイル](https://raw.githubusercontent.com/Aodaruma/after-effects-mcp-rs/main/src/scripts/mcp-bridge-auto.jsx)
-
-配置先:
+Bridge panel の配置先:
 
 - Windows: `C:\Program Files\Adobe\Adobe After Effects <YEAR>\Support Files\Scripts\ScriptUI Panels\`
 - macOS: `/Applications/Adobe After Effects <YEAR>/Scripts/ScriptUI Panels/`
 
-`.msi` / `.pkg` 導入後に AE を追加インストール・更新した場合は、1回だけ手動導入を実行してください。
-
-- Windows: `powershell -ExecutionPolicy Bypass -File .\scripts\install-bridge.ps1`
-- macOS: `bash ./scripts/install-bridge.sh`
-
-#### 3.1-C After Effects 側を設定
-
-1. `Edit > Preferences > Scripting & Expressions` を開く
-2. `Allow Scripts to Write Files and Access Network` を有効化
-3. After Effects を再起動
-4. `Window > mcp-bridge-auto.jsx` を開く
-5. `Auto-run commands` を ON
-
-#### 3.1-D MCP サーバーを登録
-
-Codex CLI 例:
-
-Windows（`.msi` の既定配置先）:
-
-```powershell
-codex mcp add aftereffects -- "C:\Program Files\AfterEffectsMcp\ae-mcp.exe" serve-stdio
-```
-
-macOS（`.pkg` の既定配置先）:
-
-```bash
-codex mcp add aftereffects -- /usr/local/bin/ae-mcp serve-stdio
-```
-
-### 3.2 Development setup（開発者向け）
-
-#### 3.2-A 前提
-
-- Adobe After Effects（2022+ 推奨）
-- Rust stable / Cargo
-- Windows または macOS
-
-#### 3.2-B ビルド
-
-```bash
-cargo build --release -p ae-mcp
-```
-
-生成物:
-
-- Windows: `target/release/ae-mcp.exe`
-- macOS: `target/release/ae-mcp`
-
-#### 3.2-C スクリプトで AE ブリッジ導入
-
-Windows (PowerShell):
+`ae-mcp` インストール後に AE を追加・更新した場合は、bridge installer を再実行してください。
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\install-bridge.ps1
 ```
 
-`-AfterEffectsPath` を省略した場合、検出された `Adobe After Effects <YEAR>` すべてにコピーします。
+```bash
+bash ./scripts/install-bridge.sh
+```
 
-macOS (bash):
+インストール済み binary で daemon を service 起動する例:
+
+```powershell
+& "C:\Program Files\AfterEffectsMcp\ae-mcp.exe" service install
+& "C:\Program Files\AfterEffectsMcp\ae-mcp.exe" service start
+```
+
+```bash
+ae-mcp service install
+ae-mcp service start
+```
+
+Codex CLI への登録例:
+
+```powershell
+codex mcp add aftereffects -- "C:\Program Files\AfterEffectsMcp\ae-mcp.exe" serve-stdio
+```
+
+```bash
+codex mcp add aftereffects -- /usr/local/bin/ae-mcp serve-stdio
+```
+
+### 3.3 開発者向けセットアップ
+
+前提は Adobe After Effects、Rust stable、Cargo です。
+
+source から build します。
+
+```bash
+cargo build --release -p ae-mcp
+```
+
+repository 内の bridge panel を配置します。
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\install-bridge.ps1
+```
 
 ```bash
 bash ./scripts/install-bridge.sh
 ```
 
-`--ae-path` を省略した場合、検出された `/Applications/Adobe After Effects <YEAR>` すべてにコピーします。
+別 terminal で daemon を起動します。
 
-#### 3.2-D After Effects 側の設定
+```powershell
+.\target\release\ae-mcp.exe serve-daemon
+```
 
-1. `Edit > Preferences > Scripting & Expressions` を開く
-2. `Allow Scripts to Write Files and Access Network` を有効化
-3. After Effects を再起動
-4. `Window > mcp-bridge-auto.jsx` を開く
-5. `Auto-run commands` を ON
-
-#### 3.2-E MCP サーバー登録
-
-Codex CLI 例:
+MCP クライアントに stdio server を登録します。
 
 ```bash
 codex mcp add aftereffects -- "<ABSOLUTE_PATH>/target/release/ae-mcp.exe" serve-stdio
@@ -207,21 +166,67 @@ macOS では `.exe` を外してください。
 
 ```powershell
 <AE_MCP_PATH> health
-<AE_MCP_PATH> bridge run-script --script listCompositions --parameters '{}'
-<AE_MCP_PATH> bridge get-results
+<AE_MCP_PATH> serve-daemon
 ```
+
+別ターミナルでMCP tool経路を確認します。
+
+```powershell
+'{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list-ae-instances","arguments":{}}}' | <AE_MCP_PATH> serve-stdio
+```
+
+AEで `Window > mcp-bridge-auto.jsx` を開き `Auto-run commands` をONにすると、`list-ae-instances` に `instanceId` と `appVersion` が表示されます。
 
 ## 5. 使用例
 
-安定 ID 指定でエフェクトを適用:
+任意JSXを実行:
 
 ```json
 {
-  "compId": 1,
-  "layerId": 15,
-  "effectMatchName": "ADBE Gaussian Blur 2",
-  "effectSettings": {
-    "Blurriness": 18
+  "code": "return app.project ? app.project.numItems : 0;",
+  "mode": "unsafe",
+  "description": "Count project items",
+  "timeoutMs": 10000,
+  "resultRetentionSeconds": 3600
+}
+```
+
+特定のAE instanceを指定:
+
+```json
+{
+  "code": "return app.version;",
+  "mode": "unsafe",
+  "description": "Check AE version",
+  "targetInstanceId": "ae-25.0-...",
+  "timeoutMs": 10000
+}
+```
+
+timeout後に結果を再確認:
+
+```json
+{
+  "requestId": "req-..."
+}
+```
+
+このpayloadを `get-jsx-result` に渡します。
+
+`run-jsx` 経由で、安定 ID 指定でエフェクトを適用:
+
+```json
+{
+  "code": "return applyEffect(args);",
+  "mode": "unsafe",
+  "description": "Apply Gaussian Blur",
+  "args": {
+    "compId": 1,
+    "layerId": 15,
+    "effectMatchName": "ADBE Gaussian Blur 2",
+    "effectSettings": {
+      "Blurriness": 18
+    }
   }
 }
 ```
@@ -230,9 +235,14 @@ macOS では `.exe` を外してください。
 
 ```json
 {
-  "compId": 1,
-  "layerId": 15,
-  "effectMatchName": "ADBE Glo2"
+  "code": "return describeEffect(args);",
+  "mode": "unsafe",
+  "description": "Describe Glow effect",
+  "args": {
+    "compId": 1,
+    "layerId": 15,
+    "effectMatchName": "ADBE Glo2"
+  }
 }
 ```
 
@@ -240,9 +250,14 @@ macOS では `.exe` を外してください。
 
 ```json
 {
-  "compName": "Main Comp",
-  "layerName": "FX Layer",
-  "includeUnavailable": true
+  "code": "return listSupportedEffects(args);",
+  "mode": "unsafe",
+  "description": "List supported effects",
+  "args": {
+    "compName": "Main Comp",
+    "layerName": "FX Layer",
+    "includeUnavailable": true
+  }
 }
 ```
 
@@ -250,41 +265,104 @@ macOS では `.exe` を外してください。
 
 | ツール | 説明 |
 |---|---|
-| `run-script` | allowlist 方式でブリッジスクリプトを実行 |
-| `get-results` | 最新のブリッジ結果を取得 |
+| `run-jsx` | daemon broker経由でunsafe JSXを実行 |
+| `run-jsx-file` | daemon broker経由でローカルJSXファイルを実行 |
+| `get-jsx-result` | `requestId` から保持済み結果を取得 |
+| `list-ae-instances` | 起動中のAE bridge instanceとバージョンを取得 |
+| `get-results` | 最新の保持済み結果、または `requestId` 指定結果を取得 |
 | `get-help` | 基本ヘルプ |
-| `create-composition` | コンポジション作成 |
-| `setLayerKeyframe` | キーフレーム設定 |
-| `setLayerExpression` | エクスプレッション設定/削除 |
-| `apply-effect` | レイヤーへエフェクト適用 |
-| `apply-effect-template` | テンプレート適用 |
-| `list-supported-effects` | 既知カタログの可用性確認 |
-| `describe-effect` | エフェクトパラメータ調査 |
-| `mcp_aftereffects_applyEffect` | 直接呼び出し版 |
-| `mcp_aftereffects_applyEffectTemplate` | 直接呼び出し版 |
-| `mcp_aftereffects_listSupportedEffects` | 直接呼び出し版 |
-| `mcp_aftereffects_describeEffect` | 直接呼び出し版 |
-| `mcp_aftereffects_get_effects_help` | エフェクトヘルプ |
+| `save-frame-png` | 1フレームPNGプレビュー保存 |
+| `cleanup-preview-folder` | previewファイル削除。AE instance間でglobal exclusive |
 | `run-bridge-test` | ブリッジ/エフェクト簡易テスト |
+
+多くのAE操作は `run-jsx` / `run-jsx-file` で行います。daemonは同一AE instance内のFIFOを保証し、異なるAE instanceは並列実行できます。
+
+主要オプション:
+
+| オプション | 説明 |
+|---|---|
+| `mode` | 必須。現在は `unsafe` のみ |
+| `description` | 必須。ログとAE undo groupに使う説明 |
+| `timeoutMs` | MCP呼び出しが待つ時間 |
+| `resultRetentionSeconds` | 結果保持秒数。既定 `3600`、上限 `86400` |
+| `targetInstanceId` | AE instanceを厳密指定 |
+| `targetVersion` | AE `appVersion` / 表示名で指定 |
+
+target選択:
+
+- AE instanceが0件ならエラー
+- AE instanceが1件だけなら自動選択
+- AE instanceが複数件なら `targetInstanceId` または `targetVersion` を指定
 
 ## 7. トラブルシュート
 
-- `ae_command.json` が `pending` のまま:
+- 実行系toolがdaemon接続エラーを返す:
+  - `ae-mcp serve-daemon` を起動、またはserviceをinstall/start
+  - `health` で `daemon_addr` を確認
+- `list-ae-instances` が空:
   - AE パネル未起動
   - `Auto-run commands` が OFF
   - スクリプト更新後のパネル再読込漏れ
+- 複数AE instanceが起動している:
+  - `list-ae-instances` を実行
+  - `targetInstanceId` または `targetVersion` を指定
+- `get-jsx-result` が `timeout` を返す:
+  - MCP呼び出しが待ちきれなかった状態で、AE側の実行は継続している可能性があります
+  - 同じ `requestId` でもう一度 `get-jsx-result` を実行
 - インストーラー導入後に AE でパネルが見つからない:
   - AE再起動後に `Window > mcp-bridge-auto.jsx` を確認
   - 見つからない場合は `install-bridge.ps1` / `install-bridge.sh` を手動実行
-- `get-results` が `waiting`/stale:
-  - `~/Documents/ae-mcp-bridge/ae_command.json` と `ae_mcp_result.json` の更新時刻を確認
+- 確認対象ファイル:
+  - `~/Documents/ae-mcp-bridge/instances/<instanceId>/heartbeat.json`
+  - `~/Documents/ae-mcp-bridge/instances/<instanceId>/ae_command.json`
+  - `~/Documents/ae-mcp-bridge/instances/<instanceId>/ae_mcp_result.json`
+  - `~/Documents/ae-mcp-bridge/registry/<requestId>.json`
 - Windows で `service install` が Access Denied:
   - 管理者権限シェル（`gsudo` など）で実行
 - `-AfterEffectsPath` が `C:\Program` に分断される:
   - シングルクォートで指定
     - `-AfterEffectsPath 'C:\Program Files\Adobe\Adobe After Effects 2025'`
 
-## 8. ドキュメント
+## 8. 設定
+
+既定値:
+
+| キー | 既定値 | 説明 |
+|---|---:|---|
+| `daemon_addr` | `127.0.0.1:47655` | ローカルdaemon brokerのアドレス |
+| `poll_interval_ms` | `250` | AE結果poll間隔 |
+| `result_timeout_ms` | `5000` | 既定の実行待機timeout |
+| `result_retention_seconds` | `3600` | 既定の結果保持秒数 |
+| `result_retention_max_seconds` | `86400` | 許可する最大保持秒数 |
+| `instance_heartbeat_stale_ms` | `10000` | AE heartbeatをstale扱いする閾値 |
+
+TOML設定例:
+
+```toml
+daemon_addr = "127.0.0.1:47655"
+poll_interval_ms = 250
+result_timeout_ms = 10000
+result_retention_seconds = 3600
+result_retention_max_seconds = 86400
+instance_heartbeat_stale_ms = 10000
+log_level = "info"
+
+[bridge]
+root_dir = "C:\\Users\\YOU\\Documents\\ae-mcp-bridge"
+command_file = "C:\\Users\\YOU\\Documents\\ae-mcp-bridge\\ae_command.json"
+result_file = "C:\\Users\\YOU\\Documents\\ae-mcp-bridge\\ae_mcp_result.json"
+```
+
+`command_file` と `result_file` は互換用のfallback pathです。daemon経由の実行では `root_dir/instances/<instanceId>/` 以下のinstance別ファイルを使います。
+
+daemonとstdioには同じconfigを指定してください。
+
+```powershell
+ae-mcp --config C:\path\ae-mcp.toml serve-daemon
+codex mcp add aftereffects -- ae-mcp --config C:\path\ae-mcp.toml serve-stdio
+```
+
+## 9. ドキュメント
 
 - [Rust migration specification](docs/specification-rust-migration.md)
 - [Development stages](docs/development-stages.md)
@@ -295,6 +373,6 @@ macOS では `.exe` を外してください。
 - [Operations runbook](docs/operations-runbook.md)
 - [GA release checklist](docs/release-checklist.md)
 
-## 9. ライセンス
+## 10. ライセンス
 
 MIT License。詳細は [LICENSE](LICENSE) を参照してください。

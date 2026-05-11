@@ -1,12 +1,17 @@
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use mcp_core::AppConfig;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
-use std::fs;
-use std::path::Path;
+use serde_json::{json, Value};
+use std::fs::{self, OpenOptions};
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use thiserror::Error;
+
+static REQUEST_COUNTER: AtomicU64 = AtomicU64::new(1);
+const BROKER_LOCK_STALE_SECONDS: u64 = 86_400;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -24,6 +29,8 @@ pub struct CommandFile {
     pub args: Value,
     pub timestamp: String,
     pub status: CommandStatus,
+    #[serde(default, rename = "requestId", skip_serializing_if = "Option::is_none")]
+    pub request_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -31,6 +38,105 @@ pub struct WaitingResult {
     pub status: String,
     pub message: String,
     pub timestamp: String,
+    #[serde(default, rename = "requestId", skip_serializing_if = "Option::is_none")]
+    pub request_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AeInstance {
+    pub instance_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app_version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_request_id: Option<String>,
+    pub bridge_root: String,
+    pub command_file: String,
+    pub result_file: String,
+    pub last_heartbeat_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub heartbeat_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct BridgeTarget {
+    pub instance_id: Option<String>,
+    pub version: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct BridgeRunOptions {
+    pub target: BridgeTarget,
+    pub timeout: Duration,
+    pub poll_interval: Duration,
+    pub retention_seconds: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct RequestRecord {
+    pub request_id: String,
+    pub command: String,
+    pub status: String,
+    pub created_at: String,
+    pub updated_at: String,
+    pub expires_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ae_instance: Option<AeInstance>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result_raw: Option<String>,
+}
+
+impl RequestRecord {
+    pub fn to_value(&self) -> Value {
+        serde_json::to_value(self).unwrap_or_else(|_| {
+            json!({
+                "requestId": self.request_id,
+                "status": self.status,
+                "message": "failed to serialize request record"
+            })
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct BridgeRunOutcome {
+    pub record: RequestRecord,
+    pub registry_path: PathBuf,
+}
+
+impl BridgeRunOutcome {
+    pub fn to_value(&self) -> Value {
+        let mut value = self.record.to_value();
+        if let Some(obj) = value.as_object_mut() {
+            obj.insert(
+                "registryPath".to_string(),
+                Value::String(self.registry_path.display().to_string()),
+            );
+        }
+        value
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct CurrentRequest {
+    request_id: String,
+    command: String,
+    status: String,
+    dispatched_at: String,
 }
 
 #[derive(Debug, Error)]
@@ -49,6 +155,18 @@ pub struct BridgeClient {
 impl BridgeClient {
     pub fn new(cfg: AppConfig) -> Result<Self> {
         ensure_bridge_dir(&cfg)?;
+        fs::create_dir_all(cfg.bridge.root_dir.join("instances")).with_context(|| {
+            format!(
+                "failed to create instances directory: {}",
+                cfg.bridge.root_dir.join("instances").display()
+            )
+        })?;
+        fs::create_dir_all(cfg.bridge.root_dir.join("registry")).with_context(|| {
+            format!(
+                "failed to create registry directory: {}",
+                cfg.bridge.root_dir.join("registry").display()
+            )
+        })?;
         Ok(Self { cfg })
     }
 
@@ -56,13 +174,22 @@ impl BridgeClient {
         &self.cfg
     }
 
+    /// Compatibility path for old queued commands. New MCP calls should use run_command_sync.
     pub fn write_command_file(&self, command: &str, args: Value) -> Result<()> {
         let payload = CommandFile {
             command: command.to_string(),
             args,
             timestamp: chrono_like_timestamp(),
             status: CommandStatus::Pending,
+            request_id: None,
         };
+
+        let active = self
+            .list_active_instances(Duration::from_millis(self.cfg.instance_heartbeat_stale_ms))?;
+        if active.len() == 1 {
+            return write_json_file(&instance_command_path(&active[0]), &payload);
+        }
+
         write_json_file(&self.cfg.bridge.command_file, &payload)
     }
 
@@ -71,6 +198,7 @@ impl BridgeClient {
             status: "waiting".to_string(),
             message: "Waiting for new result from the host application...".to_string(),
             timestamp: chrono_like_timestamp(),
+            request_id: None,
         };
         write_json_file(&self.cfg.bridge.result_file, &payload)
     }
@@ -85,6 +213,11 @@ impl BridgeClient {
     }
 
     pub fn read_results_with_stale_warning(&self, stale_threshold: Duration) -> Result<String> {
+        if let Some(record) = self.latest_request_record()? {
+            return serde_json::to_string_pretty(&record.to_value())
+                .with_context(|| "failed to serialize latest request record");
+        }
+
         let path = &self.cfg.bridge.result_file;
         if !path.exists() {
             return Ok(json_text(&serde_json::json!({
@@ -138,7 +271,7 @@ impl BridgeClient {
                 }
             }
 
-            if elapsed_since(start) >= timeout {
+            if elapsed_since_system(start) >= timeout {
                 let suffix = expected_command
                     .map(|x| format!(" for command '{x}'"))
                     .unwrap_or_default();
@@ -147,6 +280,606 @@ impl BridgeClient {
 
             thread::sleep(poll_interval);
         }
+    }
+
+    pub fn list_active_instances(&self, stale_threshold: Duration) -> Result<Vec<AeInstance>> {
+        let mut instances = Vec::new();
+        let dir = self.instances_dir();
+        if !dir.exists() {
+            return Ok(instances);
+        }
+
+        for entry in fs::read_dir(&dir)
+            .with_context(|| format!("failed to read instances directory: {}", dir.display()))?
+        {
+            let entry = entry?;
+            let heartbeat_path = entry.path().join("heartbeat.json");
+            if !heartbeat_path.exists() {
+                continue;
+            }
+            let metadata = match fs::metadata(&heartbeat_path) {
+                Ok(value) => value,
+                Err(_) => continue,
+            };
+            let modified = metadata
+                .modified()
+                .unwrap_or_else(|_| SystemTime::now() - stale_threshold);
+            if SystemTime::now()
+                .duration_since(modified)
+                .unwrap_or_else(|_| Duration::from_secs(0))
+                > stale_threshold
+            {
+                continue;
+            }
+            let raw = match fs::read_to_string(&heartbeat_path) {
+                Ok(value) => value,
+                Err(_) => continue,
+            };
+            let mut instance = match serde_json::from_str::<AeInstance>(&raw) {
+                Ok(value) => value,
+                Err(_) => continue,
+            };
+            instance.heartbeat_path = Some(heartbeat_path.display().to_string());
+            instances.push(instance);
+        }
+
+        instances.sort_by(|a, b| a.instance_id.cmp(&b.instance_id));
+        Ok(instances)
+    }
+
+    pub fn run_command_sync(
+        &self,
+        command: &str,
+        args: Value,
+        options: BridgeRunOptions,
+    ) -> Result<BridgeRunOutcome> {
+        let prepared = self.prepare_request(command, options.retention_seconds, None)?;
+        let registry_path = prepared.registry_path.clone();
+        let mut record = prepared.record;
+
+        let started = Instant::now();
+        let _lock = match self.acquire_broker_lock(options.timeout, options.poll_interval) {
+            Ok(lock) => lock,
+            Err(error) => {
+                record.status = "timeout".to_string();
+                record.updated_at = chrono_like_timestamp();
+                record.message = Some(error.to_string());
+                self.write_request_record(&record)?;
+                return Ok(BridgeRunOutcome {
+                    record,
+                    registry_path,
+                });
+            }
+        };
+        self.cleanup_registry()?;
+
+        let instance = match self.resolve_target(&options.target) {
+            Ok(instance) => instance,
+            Err(error) => {
+                record = self.mark_request_failed(&record.request_id, error.to_string())?;
+                return Ok(BridgeRunOutcome {
+                    record,
+                    registry_path,
+                });
+            }
+        };
+        self.run_prepared_request_on_instance(
+            &record.request_id,
+            command,
+            args,
+            instance,
+            options,
+            Some(started),
+        )
+    }
+
+    pub fn prepare_request(
+        &self,
+        command: &str,
+        retention_seconds: u64,
+        ae_instance: Option<AeInstance>,
+    ) -> Result<BridgeRunOutcome> {
+        self.cleanup_registry()?;
+        let request_id = generate_request_id();
+        let created_at = chrono_like_timestamp();
+        let registry_path = self.registry_path(&request_id);
+        let record = RequestRecord {
+            request_id: request_id.clone(),
+            command: command.to_string(),
+            status: "queued".to_string(),
+            created_at: created_at.clone(),
+            updated_at: created_at,
+            expires_at: timestamp_after_seconds(retention_seconds),
+            ae_instance,
+            message: None,
+            result: None,
+            result_raw: None,
+        };
+        self.write_request_record(&record)?;
+        Ok(BridgeRunOutcome {
+            record,
+            registry_path,
+        })
+    }
+
+    pub fn mark_request_timeout(&self, request_id: &str, message: String) -> Result<RequestRecord> {
+        let mut record = self.read_request_record(request_id)?;
+        record.status = "timeout".to_string();
+        record.updated_at = chrono_like_timestamp();
+        record.message = Some(message);
+        self.write_request_record(&record)?;
+        Ok(record)
+    }
+
+    pub fn mark_request_failed(&self, request_id: &str, message: String) -> Result<RequestRecord> {
+        let mut record = self.read_request_record(request_id)?;
+        record.status = "failed".to_string();
+        record.updated_at = chrono_like_timestamp();
+        record.message = Some(message);
+        self.write_request_record(&record)?;
+        Ok(record)
+    }
+
+    pub fn resolve_target(&self, target: &BridgeTarget) -> Result<AeInstance> {
+        let active = self
+            .list_active_instances(Duration::from_millis(self.cfg.instance_heartbeat_stale_ms))?;
+        if active.is_empty() {
+            return Err(anyhow!(
+                "No active After Effects bridge instances were found. Open Window > mcp-bridge-auto.jsx and enable Auto-run commands."
+            ));
+        }
+
+        if let Some(instance_id) = target.instance_id.as_deref() {
+            return active
+                .into_iter()
+                .find(|instance| instance.instance_id == instance_id)
+                .ok_or_else(|| anyhow!("targetInstanceId not found or stale: {instance_id}"));
+        }
+
+        let filtered = if let Some(version) = target.version.as_deref() {
+            active
+                .into_iter()
+                .filter(|instance| instance_matches_version(instance, version))
+                .collect::<Vec<_>>()
+        } else {
+            active
+        };
+
+        match filtered.len() {
+            0 => Err(anyhow!("No active After Effects instance matched the requested target")),
+            1 => Ok(filtered.into_iter().next().expect("single instance")),
+            _ => Err(anyhow!(
+                "Multiple active After Effects instances matched. Specify targetInstanceId or targetVersion. Active instances: {}",
+                serde_json::to_string(&filtered)?
+            )),
+        }
+    }
+
+    pub fn run_prepared_request_on_instance(
+        &self,
+        request_id: &str,
+        command: &str,
+        args: Value,
+        instance: AeInstance,
+        options: BridgeRunOptions,
+        started_at: Option<Instant>,
+    ) -> Result<BridgeRunOutcome> {
+        let registry_path = self.registry_path(request_id);
+        let mut record = self.read_request_record(request_id)?;
+        let started = started_at.unwrap_or_else(Instant::now);
+        record.ae_instance = Some(instance.clone());
+        record.updated_at = chrono_like_timestamp();
+        self.write_request_record(&record)?;
+
+        while self.is_instance_busy(&instance)? {
+            if started.elapsed() >= options.timeout {
+                record.status = "timeout".to_string();
+                record.updated_at = chrono_like_timestamp();
+                record.message = Some(
+                    "Timed out while waiting for the target After Effects instance to become available. Use get-jsx-result with requestId to check later."
+                        .to_string(),
+                );
+                self.write_request_record(&record)?;
+                return Ok(BridgeRunOutcome {
+                    record,
+                    registry_path,
+                });
+            }
+            thread::sleep(options.poll_interval);
+        }
+
+        record.status = "dispatched".to_string();
+        record.updated_at = chrono_like_timestamp();
+        self.write_request_record(&record)?;
+
+        self.write_instance_waiting_result(&instance, &request_id)?;
+        self.write_current_request(&instance, &request_id, command)?;
+        self.write_instance_command_file(&instance, &request_id, command, args)?;
+
+        record.status = "running".to_string();
+        record.updated_at = chrono_like_timestamp();
+        self.write_request_record(&record)?;
+
+        loop {
+            if let Some((raw, parsed)) =
+                self.try_read_instance_result(&instance, &request_id, Some(command))?
+            {
+                record.status = result_record_status(&parsed).to_string();
+                record.updated_at = chrono_like_timestamp();
+                record.result = Some(parsed);
+                record.result_raw = Some(raw);
+                record.message = None;
+                self.write_request_record(&record)?;
+                self.clear_current_request(&instance)?;
+                return Ok(BridgeRunOutcome {
+                    record,
+                    registry_path,
+                });
+            }
+
+            if started.elapsed() >= options.timeout {
+                record.status = "timeout".to_string();
+                record.updated_at = chrono_like_timestamp();
+                record.message = Some(
+                    "Timed out while waiting for AE to return a result. Use get-jsx-result with requestId to check the result later."
+                        .to_string(),
+                );
+                self.write_request_record(&record)?;
+                return Ok(BridgeRunOutcome {
+                    record,
+                    registry_path,
+                });
+            }
+
+            thread::sleep(options.poll_interval);
+        }
+    }
+
+    pub fn get_request_record(&self, request_id: &str) -> Result<RequestRecord> {
+        let mut record = self.read_request_record(request_id)?;
+        if matches!(
+            record.status.as_str(),
+            "completed" | "failed" | "lost" | "cancelled"
+        ) {
+            return Ok(record);
+        }
+
+        if let Some(instance) = record.ae_instance.clone() {
+            if let Some((raw, parsed)) =
+                self.try_read_instance_result(&instance, request_id, Some(&record.command))?
+            {
+                record.status = result_record_status(&parsed).to_string();
+                record.updated_at = chrono_like_timestamp();
+                record.result = Some(parsed);
+                record.result_raw = Some(raw);
+                record.message = None;
+                self.write_request_record(&record)?;
+                self.clear_current_request_if_matches(&instance, request_id)?;
+            } else if self.is_instance_stale(&instance)? {
+                record.status = "lost".to_string();
+                record.updated_at = chrono_like_timestamp();
+                record.message = Some(
+                    "The target After Effects instance heartbeat is stale; the request may have been lost."
+                        .to_string(),
+                );
+                self.write_request_record(&record)?;
+                self.clear_current_request_if_matches(&instance, request_id)?;
+            }
+        }
+
+        Ok(record)
+    }
+
+    pub fn latest_request_record(&self) -> Result<Option<RequestRecord>> {
+        let dir = self.registry_dir();
+        if !dir.exists() {
+            return Ok(None);
+        }
+        let mut latest: Option<(SystemTime, String)> = None;
+        for entry in fs::read_dir(&dir)
+            .with_context(|| format!("failed to read registry directory: {}", dir.display()))?
+        {
+            let entry = entry?;
+            let path = entry.path();
+            if path.extension().and_then(|x| x.to_str()) != Some("json") {
+                continue;
+            }
+            let modified = fs::metadata(&path)
+                .and_then(|metadata| metadata.modified())
+                .unwrap_or(SystemTime::UNIX_EPOCH);
+            let request_id = path
+                .file_stem()
+                .and_then(|x| x.to_str())
+                .unwrap_or_default()
+                .to_string();
+            if latest
+                .as_ref()
+                .map(|(current, _)| modified > *current)
+                .unwrap_or(true)
+            {
+                latest = Some((modified, request_id));
+            }
+        }
+
+        latest
+            .map(|(_, request_id)| self.get_request_record(&request_id))
+            .transpose()
+    }
+
+    fn instances_dir(&self) -> PathBuf {
+        self.cfg.bridge.root_dir.join("instances")
+    }
+
+    fn registry_dir(&self) -> PathBuf {
+        self.cfg.bridge.root_dir.join("registry")
+    }
+
+    fn registry_path(&self, request_id: &str) -> PathBuf {
+        self.registry_dir().join(format!("{request_id}.json"))
+    }
+
+    fn broker_lock_path(&self) -> PathBuf {
+        self.cfg.bridge.root_dir.join("broker.lock")
+    }
+
+    fn acquire_broker_lock(
+        &self,
+        timeout: Duration,
+        poll_interval: Duration,
+    ) -> Result<BrokerLock> {
+        let started = Instant::now();
+        let path = self.broker_lock_path();
+        loop {
+            match OpenOptions::new().write(true).create_new(true).open(&path) {
+                Ok(mut file) => {
+                    let payload = json!({
+                        "pid": std::process::id(),
+                        "createdAt": chrono_like_timestamp()
+                    });
+                    let _ = writeln!(file, "{}", serde_json::to_string(&payload)?);
+                    return Ok(BrokerLock { path });
+                }
+                Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+                    maybe_remove_stale_lock(&path)?;
+                    if started.elapsed() >= timeout {
+                        return Err(anyhow!(
+                            "timed out waiting for broker lock; another MCP process may be running a command"
+                        ));
+                    }
+                    thread::sleep(poll_interval);
+                }
+                Err(err) => {
+                    return Err(err).with_context(|| {
+                        format!("failed to create broker lock: {}", path.display())
+                    });
+                }
+            }
+        }
+    }
+
+    fn write_instance_command_file(
+        &self,
+        instance: &AeInstance,
+        request_id: &str,
+        command: &str,
+        args: Value,
+    ) -> Result<()> {
+        let payload = CommandFile {
+            command: command.to_string(),
+            args,
+            timestamp: chrono_like_timestamp(),
+            status: CommandStatus::Pending,
+            request_id: Some(request_id.to_string()),
+        };
+        write_json_file(&instance_command_path(instance), &payload)
+    }
+
+    fn write_instance_waiting_result(&self, instance: &AeInstance, request_id: &str) -> Result<()> {
+        let payload = WaitingResult {
+            status: "waiting".to_string(),
+            message: "Waiting for new result from After Effects...".to_string(),
+            timestamp: chrono_like_timestamp(),
+            request_id: Some(request_id.to_string()),
+        };
+        write_json_file(&instance_result_path(instance), &payload)
+    }
+
+    fn write_current_request(
+        &self,
+        instance: &AeInstance,
+        request_id: &str,
+        command: &str,
+    ) -> Result<()> {
+        let payload = CurrentRequest {
+            request_id: request_id.to_string(),
+            command: command.to_string(),
+            status: "running".to_string(),
+            dispatched_at: chrono_like_timestamp(),
+        };
+        write_json_file(&instance_current_request_path(instance), &payload)
+    }
+
+    fn read_current_request(&self, instance: &AeInstance) -> Result<Option<CurrentRequest>> {
+        let path = instance_current_request_path(instance);
+        if !path.exists() {
+            return Ok(None);
+        }
+        let raw = fs::read_to_string(&path)
+            .with_context(|| format!("failed to read current request: {}", path.display()))?;
+        let current = serde_json::from_str(&raw)
+            .with_context(|| format!("failed to parse current request: {}", path.display()))?;
+        Ok(Some(current))
+    }
+
+    fn clear_current_request(&self, instance: &AeInstance) -> Result<()> {
+        let path = instance_current_request_path(instance);
+        if path.exists() {
+            fs::remove_file(&path)
+                .with_context(|| format!("failed to remove current request: {}", path.display()))?;
+        }
+        Ok(())
+    }
+
+    fn clear_current_request_if_matches(
+        &self,
+        instance: &AeInstance,
+        request_id: &str,
+    ) -> Result<()> {
+        if let Some(current) = self.read_current_request(instance)? {
+            if current.request_id == request_id {
+                self.clear_current_request(instance)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn is_instance_busy(&self, instance: &AeInstance) -> Result<bool> {
+        let Some(current) = self.read_current_request(instance)? else {
+            return Ok(false);
+        };
+
+        if let Some((raw, parsed)) =
+            self.try_read_instance_result(instance, &current.request_id, Some(&current.command))?
+        {
+            if let Ok(mut record) = self.read_request_record(&current.request_id) {
+                record.status = result_record_status(&parsed).to_string();
+                record.updated_at = chrono_like_timestamp();
+                record.result = Some(parsed);
+                record.result_raw = Some(raw);
+                record.message = None;
+                let _ = self.write_request_record(&record);
+            }
+            self.clear_current_request(instance)?;
+            return Ok(false);
+        }
+
+        if self.is_instance_stale(instance)? {
+            if let Ok(mut record) = self.read_request_record(&current.request_id) {
+                record.status = "lost".to_string();
+                record.updated_at = chrono_like_timestamp();
+                record.message = Some(
+                    "The target After Effects instance heartbeat is stale; the request may have been lost."
+                        .to_string(),
+                );
+                let _ = self.write_request_record(&record);
+            }
+            self.clear_current_request(instance)?;
+            return Ok(false);
+        }
+
+        Ok(true)
+    }
+
+    fn is_instance_stale(&self, instance: &AeInstance) -> Result<bool> {
+        let heartbeat_path = instance_heartbeat_path(instance);
+        if !heartbeat_path.exists() {
+            return Ok(true);
+        }
+        let modified = fs::metadata(&heartbeat_path)
+            .and_then(|metadata| metadata.modified())
+            .unwrap_or(SystemTime::UNIX_EPOCH);
+        let age = SystemTime::now()
+            .duration_since(modified)
+            .unwrap_or_else(|_| Duration::from_secs(0));
+        Ok(age > Duration::from_millis(self.cfg.instance_heartbeat_stale_ms))
+    }
+
+    fn try_read_instance_result(
+        &self,
+        instance: &AeInstance,
+        request_id: &str,
+        expected_command: Option<&str>,
+    ) -> Result<Option<(String, Value)>> {
+        let path = instance_result_path(instance);
+        if !path.exists() {
+            return Ok(None);
+        }
+        let raw = fs::read_to_string(&path)
+            .with_context(|| format!("failed to read instance result: {}", path.display()))?;
+        if raw.trim().is_empty() {
+            return Ok(None);
+        }
+        let parsed = match serde_json::from_str::<Value>(&raw) {
+            Ok(value) => value,
+            Err(_) => return Ok(None),
+        };
+        let request_matches = parsed
+            .get("_requestId")
+            .and_then(Value::as_str)
+            .map(|value| value == request_id)
+            .unwrap_or(false);
+        if !request_matches {
+            return Ok(None);
+        }
+        if let Some(command) = expected_command {
+            let command_matches = parsed
+                .get("_commandExecuted")
+                .and_then(Value::as_str)
+                .map(|value| value == command)
+                .unwrap_or(false);
+            if !command_matches {
+                return Ok(None);
+            }
+        }
+        Ok(Some((raw, parsed)))
+    }
+
+    fn write_request_record(&self, record: &RequestRecord) -> Result<()> {
+        write_json_file(&self.registry_path(&record.request_id), record)
+    }
+
+    fn read_request_record(&self, request_id: &str) -> Result<RequestRecord> {
+        validate_request_id(request_id)?;
+        let path = self.registry_path(request_id);
+        let raw = fs::read_to_string(&path)
+            .with_context(|| format!("failed to read request registry: {}", path.display()))?;
+        serde_json::from_str(&raw)
+            .with_context(|| format!("failed to parse request registry: {}", path.display()))
+    }
+
+    fn cleanup_registry(&self) -> Result<()> {
+        let dir = self.registry_dir();
+        if !dir.exists() {
+            return Ok(());
+        }
+        let now = chrono::Utc::now();
+        for entry in fs::read_dir(&dir)
+            .with_context(|| format!("failed to read registry directory: {}", dir.display()))?
+        {
+            let entry = entry?;
+            let path = entry.path();
+            if path.extension().and_then(|x| x.to_str()) != Some("json") {
+                continue;
+            }
+            let raw = match fs::read_to_string(&path) {
+                Ok(value) => value,
+                Err(_) => continue,
+            };
+            let value = match serde_json::from_str::<Value>(&raw) {
+                Ok(value) => value,
+                Err(_) => continue,
+            };
+            let Some(expires_at) = value.get("expiresAt").and_then(Value::as_str) else {
+                continue;
+            };
+            let Ok(expires_at) = chrono::DateTime::parse_from_rfc3339(expires_at) else {
+                continue;
+            };
+            if expires_at.with_timezone(&chrono::Utc) <= now {
+                let _ = fs::remove_file(path);
+            }
+        }
+        Ok(())
+    }
+}
+
+struct BrokerLock {
+    path: PathBuf,
+}
+
+impl Drop for BrokerLock {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
     }
 }
 
@@ -161,19 +894,117 @@ pub fn ensure_bridge_dir(cfg: &AppConfig) -> Result<()> {
 }
 
 pub fn write_json_file<T: Serialize>(path: &Path, value: &T) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create directory: {}", parent.display()))?;
+    }
     let raw = serde_json::to_string_pretty(value).with_context(|| "failed to serialize JSON")?;
     fs::write(path, raw).with_context(|| format!("failed to write file: {}", path.display()))?;
     Ok(())
 }
 
+fn instance_command_path(instance: &AeInstance) -> PathBuf {
+    PathBuf::from(&instance.command_file)
+}
+
+fn instance_result_path(instance: &AeInstance) -> PathBuf {
+    PathBuf::from(&instance.result_file)
+}
+
+fn instance_heartbeat_path(instance: &AeInstance) -> PathBuf {
+    instance
+        .heartbeat_path
+        .as_ref()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            PathBuf::from(&instance.bridge_root)
+                .join("instances")
+                .join(&instance.instance_id)
+                .join("heartbeat.json")
+        })
+}
+
+fn instance_current_request_path(instance: &AeInstance) -> PathBuf {
+    PathBuf::from(&instance.bridge_root)
+        .join("instances")
+        .join(&instance.instance_id)
+        .join("current_request.json")
+}
+
+fn instance_matches_version(instance: &AeInstance, version: &str) -> bool {
+    let needle = version.trim().to_lowercase();
+    if needle.is_empty() {
+        return true;
+    }
+    instance
+        .app_version
+        .as_deref()
+        .map(|value| value.to_lowercase().contains(&needle))
+        .unwrap_or(false)
+        || instance
+            .display_name
+            .as_deref()
+            .map(|value| value.to_lowercase().contains(&needle))
+            .unwrap_or(false)
+}
+
+fn result_record_status(value: &Value) -> &'static str {
+    if value.get("status").and_then(Value::as_str) == Some("error") {
+        return "failed";
+    }
+    if value.get("success").and_then(Value::as_bool) == Some(false) {
+        return "failed";
+    }
+    "completed"
+}
+
+fn maybe_remove_stale_lock(path: &Path) -> Result<()> {
+    let Ok(metadata) = fs::metadata(path) else {
+        return Ok(());
+    };
+    let modified = metadata.modified().unwrap_or(SystemTime::now());
+    let age = SystemTime::now()
+        .duration_since(modified)
+        .unwrap_or_else(|_| Duration::from_secs(0));
+    if age > Duration::from_secs(BROKER_LOCK_STALE_SECONDS) {
+        fs::remove_file(path)
+            .with_context(|| format!("failed to remove stale broker lock: {}", path.display()))?;
+    }
+    Ok(())
+}
+
+fn validate_request_id(request_id: &str) -> Result<()> {
+    let valid = !request_id.is_empty()
+        && request_id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
+    if !valid {
+        return Err(anyhow!("invalid requestId"));
+    }
+    Ok(())
+}
+
+fn generate_request_id() -> String {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_else(|_| Duration::from_secs(0))
+        .as_nanos();
+    let counter = REQUEST_COUNTER.fetch_add(1, Ordering::Relaxed);
+    format!("req-{nanos:x}-{}-{counter:x}", std::process::id())
+}
+
 fn chrono_like_timestamp() -> String {
-    // Keep dependency surface minimal while preserving ISO-like output.
     let now = std::time::SystemTime::now();
     let datetime: chrono::DateTime<chrono::Utc> = now.into();
     datetime.to_rfc3339()
 }
 
-fn elapsed_since(start: SystemTime) -> Duration {
+fn timestamp_after_seconds(seconds: u64) -> String {
+    let seconds = i64::try_from(seconds).unwrap_or(i64::MAX / 2);
+    (chrono::Utc::now() + chrono::Duration::seconds(seconds)).to_rfc3339()
+}
+
+fn elapsed_since_system(start: SystemTime) -> Duration {
     SystemTime::now()
         .duration_since(start)
         .unwrap_or_else(|_| Duration::from_secs(0))
@@ -203,6 +1034,27 @@ mod tests {
             },
             dir,
         )
+    }
+
+    fn write_test_instance(cfg: &AppConfig, instance_id: &str) -> AeInstance {
+        let dir = cfg.bridge.root_dir.join("instances").join(instance_id);
+        fs::create_dir_all(&dir).expect("instance dir");
+        let instance = AeInstance {
+            instance_id: instance_id.to_string(),
+            app_name: Some("After Effects".to_string()),
+            app_version: Some("25.0".to_string()),
+            display_name: Some("Adobe After Effects 2025".to_string()),
+            project_path: None,
+            status: Some("idle".to_string()),
+            current_request_id: None,
+            bridge_root: cfg.bridge.root_dir.display().to_string(),
+            command_file: dir.join("ae_command.json").display().to_string(),
+            result_file: dir.join("ae_mcp_result.json").display().to_string(),
+            last_heartbeat_at: chrono_like_timestamp(),
+            heartbeat_path: Some(dir.join("heartbeat.json").display().to_string()),
+        };
+        write_json_file(&dir.join("heartbeat.json"), &instance).expect("heartbeat");
+        instance
     }
 
     #[test]
@@ -262,5 +1114,65 @@ mod tests {
             value.get("_commandExecuted").and_then(Value::as_str),
             Some("listCompositions")
         );
+    }
+
+    #[test]
+    fn list_active_instances_reads_heartbeat() {
+        let (cfg, _guard) = test_config();
+        let bridge = BridgeClient::new(cfg.clone()).expect("client");
+        write_test_instance(&cfg, "ae-test");
+
+        let instances = bridge
+            .list_active_instances(Duration::from_secs(10))
+            .expect("instances");
+        assert_eq!(instances.len(), 1);
+        assert_eq!(instances[0].instance_id, "ae-test");
+    }
+
+    #[test]
+    fn run_command_sync_dispatches_to_single_instance() {
+        let (cfg, _guard) = test_config();
+        let bridge = BridgeClient::new(cfg.clone()).expect("client");
+        let instance = write_test_instance(&cfg, "ae-test");
+        let result_path = PathBuf::from(instance.result_file.clone());
+
+        thread::spawn(move || {
+            let command_path = PathBuf::from(instance.command_file.clone());
+            let mut request_id = String::new();
+            for _ in 0..20 {
+                if command_path.exists() {
+                    let raw = fs::read_to_string(&command_path).expect("read command");
+                    let command: CommandFile = serde_json::from_str(&raw).expect("parse command");
+                    request_id = command.request_id.unwrap_or_default();
+                    break;
+                }
+                thread::sleep(Duration::from_millis(50));
+            }
+            let payload = serde_json::json!({
+                "status": "success",
+                "_commandExecuted": "listCompositions",
+                "_requestId": request_id
+            });
+            fs::write(
+                result_path,
+                serde_json::to_string(&payload).expect("serialize"),
+            )
+            .expect("write result");
+        });
+
+        let outcome = bridge
+            .run_command_sync(
+                "listCompositions",
+                json!({}),
+                BridgeRunOptions {
+                    target: BridgeTarget::default(),
+                    timeout: Duration::from_secs(3),
+                    poll_interval: Duration::from_millis(50),
+                    retention_seconds: 60,
+                },
+            )
+            .expect("run");
+        assert_eq!(outcome.record.status, "completed");
+        assert!(outcome.record.ae_instance.is_some());
     }
 }
