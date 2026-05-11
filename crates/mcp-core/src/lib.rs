@@ -28,6 +28,7 @@ pub const ALLOWED_SCRIPTS: &[&str] = &[
     "getCurrentTime",
     "setWorkArea",
     "getWorkArea",
+    "getCompositionMarkers",
     "cleanupPreviewFolder",
     "setSuppressDialogs",
     "getSuppressDialogs",
@@ -87,10 +88,7 @@ impl AppConfig {
         }
     }
 
-    pub fn load_with_bridge_paths(
-        config_path: Option<&Path>,
-        bridge: BridgePaths,
-    ) -> Result<Self> {
+    pub fn load_with_bridge_paths(config_path: Option<&Path>, bridge: BridgePaths) -> Result<Self> {
         let mut cfg = Self::load(config_path)?;
         if config_path.is_none() {
             cfg.bridge = bridge;
@@ -434,6 +432,18 @@ pub fn tool_specs() -> Vec<ToolSpec> {
         ToolSpec {
             name: "get-work-area",
             description: "Get the work area start and duration for a composition",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "compId": { "type": "integer", "minimum": 1 },
+                    "compIndex": { "type": "integer", "minimum": 1 },
+                    "compName": { "type": "string" }
+                }
+            }),
+        },
+        ToolSpec {
+            name: "get-composition-markers",
+            description: "Get composition markers for a composition",
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -884,6 +894,7 @@ Available scripts:
 - getCurrentTime
 - setWorkArea
 - getWorkArea
+- getCompositionMarkers
 - cleanupPreviewFolder
 - setSuppressDialogs
 - getSuppressDialogs

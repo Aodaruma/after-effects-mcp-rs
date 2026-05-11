@@ -395,6 +395,13 @@ fn dispatch_tool_inner(
                     .to_string(),
             ))
         }
+        "get-composition-markers" => {
+            bridge.write_command_file("getCompositionMarkers", args)?;
+            Ok(tool_text(
+                "Command to get composition markers has been queued.\nUse the \"get-results\" tool after a few seconds to check for confirmation."
+                    .to_string(),
+            ))
+        }
         "cleanup-preview-folder" => {
             let folder_path = args
                 .get("folderPath")

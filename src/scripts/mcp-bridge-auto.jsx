@@ -2275,6 +2275,74 @@ function getWorkArea(args) {
     }
 }
 
+function getCompositionMarkers(args) {
+    try {
+        var options = args || {};
+        var comp = fxResolveComposition(options);
+        var markerProperty = comp.markerProperty;
+        var markers = [];
+
+        if (markerProperty) {
+            for (var i = 1; i <= markerProperty.numKeys; i++) {
+                var markerValue = markerProperty.keyValue(i);
+                var timeSeconds = markerProperty.keyTime(i);
+                var marker = {
+                    index: i,
+                    timeSeconds: timeSeconds,
+                    frame: Math.round(timeSeconds * comp.frameRate),
+                    comment: markerValue.comment,
+                    chapter: markerValue.chapter,
+                    url: markerValue.url,
+                    frameTarget: markerValue.frameTarget,
+                    cuePointName: markerValue.cuePointName,
+                    duration: markerValue.duration,
+                    eventCuePoint: markerValue.eventCuePoint
+                };
+
+                try {
+                    marker.protectedRegion = markerValue.protectedRegion;
+                } catch (_protectedRegionError) {}
+
+                try {
+                    marker.label = markerValue.label;
+                } catch (_labelError) {}
+
+                try {
+                    var rawParameters = markerValue.getParameters();
+                    var parameters = {};
+                    if (rawParameters) {
+                        for (var p = 0; p < rawParameters.length; p += 2) {
+                            parameters[rawParameters[p]] = rawParameters[p + 1];
+                        }
+                    }
+                    marker.parameters = parameters;
+                } catch (_parametersError) {
+                    marker.parameters = {};
+                }
+
+                markers.push(marker);
+            }
+        }
+
+        return JSON.stringify({
+            status: "success",
+            composition: {
+                id: fxGetCompId(comp),
+                name: comp.name,
+                frameRate: comp.frameRate,
+                duration: comp.duration
+            },
+            markerCount: markers.length,
+            markers: markers
+        }, null, 2);
+    } catch (error) {
+        return JSON.stringify({
+            status: "error",
+            message: error.toString()
+        }, null, 2);
+    }
+}
+
 function cleanupPreviewFolder(args) {
     try {
         var options = args || {};
@@ -2885,6 +2953,11 @@ function executeCommand(command, args) {
                 logToPanel("Calling getWorkArea function...");
                 result = getWorkArea(args);
                 logToPanel("Returned from getWorkArea.");
+                break;
+            case "getCompositionMarkers":
+                logToPanel("Calling getCompositionMarkers function...");
+                result = getCompositionMarkers(args);
+                logToPanel("Returned from getCompositionMarkers.");
                 break;
             case "cleanupPreviewFolder":
                 logToPanel("Calling cleanupPreviewFolder function...");
