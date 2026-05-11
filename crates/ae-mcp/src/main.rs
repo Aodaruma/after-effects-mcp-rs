@@ -3,9 +3,9 @@ use clap::{Parser, Subcommand};
 use mcp_core::AppConfig;
 use std::path::PathBuf;
 use std::time::Duration;
-use tokio::time::sleep;
 use tracing::info;
 
+mod daemon;
 mod mcp_stdio;
 
 #[derive(Debug, Parser)]
@@ -93,7 +93,7 @@ async fn main() -> Result<()> {
 
     match cli.command {
         Commands::ServeStdio { once } => serve_stdio(cfg, once).await,
-        Commands::ServeDaemon { once } => serve_daemon(once).await,
+        Commands::ServeDaemon { once } => serve_daemon(cfg, once).await,
         Commands::Service {
             service_name,
             display_name,
@@ -103,6 +103,7 @@ async fn main() -> Result<()> {
         Commands::Health => {
             println!("status=ok");
             println!("bridge_root={}", cfg.bridge.root_dir.display());
+            println!("daemon_addr={}", cfg.daemon_addr);
             Ok(())
         }
     }
@@ -116,15 +117,12 @@ async fn serve_stdio(cfg: AppConfig, once: bool) -> Result<()> {
     mcp_stdio::run_stdio_server(cfg).await
 }
 
-async fn serve_daemon(once: bool) -> Result<()> {
+async fn serve_daemon(cfg: AppConfig, once: bool) -> Result<()> {
     info!("serve-daemon started");
     if once {
         return Ok(());
     }
-    loop {
-        info!("serve-daemon heartbeat");
-        sleep(Duration::from_secs(60)).await;
-    }
+    daemon::run_daemon_server(cfg)
 }
 
 fn run_service_command(
@@ -134,11 +132,12 @@ fn run_service_command(
     command: ServiceCommands,
 ) -> Result<()> {
     let current_exe = std::env::current_exe()?;
-    let mut args = vec!["serve-daemon".to_string()];
+    let mut args = Vec::new();
     if let Some(path) = cli_config {
         args.push("--config".to_string());
         args.push(path.to_string_lossy().to_string());
     }
+    args.push("serve-daemon".to_string());
 
     let service_cfg = platform_service::ServiceConfig {
         service_name,

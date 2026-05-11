@@ -51,8 +51,19 @@ pub struct BridgePaths {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AppConfig {
     pub bridge: BridgePaths,
+    #[serde(default = "default_poll_interval_ms")]
     pub poll_interval_ms: u64,
+    #[serde(default = "default_result_timeout_ms")]
     pub result_timeout_ms: u64,
+    #[serde(default = "default_result_retention_seconds")]
+    pub result_retention_seconds: u64,
+    #[serde(default = "default_result_retention_max_seconds")]
+    pub result_retention_max_seconds: u64,
+    #[serde(default = "default_instance_heartbeat_stale_ms")]
+    pub instance_heartbeat_stale_ms: u64,
+    #[serde(default = "default_daemon_addr")]
+    pub daemon_addr: String,
+    #[serde(default = "default_log_level")]
     pub log_level: String,
 }
 
@@ -68,11 +79,43 @@ impl Default for AppConfig {
                 command_file,
                 result_file,
             },
-            poll_interval_ms: 250,
-            result_timeout_ms: 5_000,
-            log_level: "info".to_string(),
+            poll_interval_ms: default_poll_interval_ms(),
+            result_timeout_ms: default_result_timeout_ms(),
+            result_retention_seconds: default_result_retention_seconds(),
+            result_retention_max_seconds: default_result_retention_max_seconds(),
+            instance_heartbeat_stale_ms: default_instance_heartbeat_stale_ms(),
+            daemon_addr: default_daemon_addr(),
+            log_level: default_log_level(),
         }
     }
+}
+
+fn default_poll_interval_ms() -> u64 {
+    250
+}
+
+fn default_result_timeout_ms() -> u64 {
+    5_000
+}
+
+fn default_result_retention_seconds() -> u64 {
+    3_600
+}
+
+fn default_result_retention_max_seconds() -> u64 {
+    86_400
+}
+
+fn default_instance_heartbeat_stale_ms() -> u64 {
+    10_000
+}
+
+fn default_daemon_addr() -> String {
+    "127.0.0.1:47655".to_string()
+}
+
+fn default_log_level() -> String {
+    "info".to_string()
 }
 
 impl AppConfig {
@@ -137,23 +180,69 @@ pub struct PromptArgument {
 pub fn tool_specs() -> Vec<ToolSpec> {
     vec![
         ToolSpec {
-            name: "run-script",
-            description: "Run a predefined script in After Effects (read/write depending on script)",
+            name: "run-jsx",
+            description: "Run unsafe JSX code in After Effects and wait for a result",
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "script": { "type": "string" },
-                    "parameters": { "type": "object" }
+                    "code": { "type": "string", "minLength": 1 },
+                    "args": { "type": "object" },
+                    "mode": { "type": "string", "enum": ["unsafe"] },
+                    "description": { "type": "string", "minLength": 1 },
+                    "timeoutMs": { "type": "integer", "minimum": 1 },
+                    "resultRetentionSeconds": { "type": "integer", "minimum": 1, "maximum": 86400 },
+                    "targetInstanceId": { "type": "string", "minLength": 1 },
+                    "targetVersion": { "type": "string", "minLength": 1 }
                 },
-                "required": ["script"]
+                "required": ["code", "mode", "description"]
+            }),
+        },
+        ToolSpec {
+            name: "run-jsx-file",
+            description: "Run an unsafe local JSX file in After Effects and wait for a result",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "minLength": 1 },
+                    "args": { "type": "object" },
+                    "mode": { "type": "string", "enum": ["unsafe"] },
+                    "description": { "type": "string", "minLength": 1 },
+                    "timeoutMs": { "type": "integer", "minimum": 1 },
+                    "resultRetentionSeconds": { "type": "integer", "minimum": 1, "maximum": 86400 },
+                    "targetInstanceId": { "type": "string", "minLength": 1 },
+                    "targetVersion": { "type": "string", "minLength": 1 }
+                },
+                "required": ["path", "mode", "description"]
+            }),
+        },
+        ToolSpec {
+            name: "get-jsx-result",
+            description: "Get a retained JSX/request result by requestId",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "requestId": { "type": "string", "minLength": 1 }
+                },
+                "required": ["requestId"]
+            }),
+        },
+        ToolSpec {
+            name: "list-ae-instances",
+            description: "List active After Effects bridge panel instances and versions",
+            input_schema: json!({
+                "type": "object",
+                "properties": {}
             }),
         },
         ToolSpec {
             name: "get-results",
-            description: "Get results from the last script executed in After Effects",
+            description:
+                "Get the latest retained request result, or a specific result by requestId",
             input_schema: json!({
                 "type": "object",
-                "properties": {}
+                "properties": {
+                    "requestId": { "type": "string", "minLength": 1 }
+                }
             }),
         },
         ToolSpec {
@@ -165,159 +254,9 @@ pub fn tool_specs() -> Vec<ToolSpec> {
             }),
         },
         ToolSpec {
-            name: "create-composition",
-            description: "Create a new composition in After Effects with specified parameters",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "name": { "type": "string" },
-                    "width": { "type": "integer", "minimum": 1 },
-                    "height": { "type": "integer", "minimum": 1 },
-                    "pixelAspect": { "type": "number", "minimum": 0.0001 },
-                    "duration": { "type": "number", "minimum": 0.0001 },
-                    "frameRate": { "type": "number", "minimum": 0.0001 },
-                    "backgroundColor": {
-                        "type": "object",
-                        "properties": {
-                            "r": { "type": "integer", "minimum": 0, "maximum": 255 },
-                            "g": { "type": "integer", "minimum": 0, "maximum": 255 },
-                            "b": { "type": "integer", "minimum": 0, "maximum": 255 }
-                        }
-                    }
-                },
-                "required": ["name", "width", "height"]
-            }),
-        },
-        ToolSpec {
-            name: "setLayerKeyframe",
-            description: "Set a keyframe for a specific layer property at a given time.",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "compIndex": { "type": "integer", "minimum": 1 },
-                    "layerIndex": { "type": "integer", "minimum": 1 },
-                    "propertyName": { "type": "string" },
-                    "timeInSeconds": { "type": "number" },
-                    "value": {}
-                },
-                "required": ["compIndex", "layerIndex", "propertyName", "timeInSeconds", "value"]
-            }),
-        },
-        ToolSpec {
-            name: "setLayerExpression",
-            description: "Set or remove an expression for a specific layer property.",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "compIndex": { "type": "integer", "minimum": 1 },
-                    "layerIndex": { "type": "integer", "minimum": 1 },
-                    "propertyName": { "type": "string" },
-                    "expressionString": { "type": "string" }
-                },
-                "required": ["compIndex", "layerIndex", "propertyName", "expressionString"]
-            }),
-        },
-        ToolSpec {
-            name: "test-animation",
-            description: "Test animation functionality in After Effects",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "operation": { "type": "string", "enum": ["keyframe", "expression"] },
-                    "compIndex": { "type": "integer", "minimum": 1 },
-                    "layerIndex": { "type": "integer", "minimum": 1 }
-                },
-                "required": ["operation", "compIndex", "layerIndex"]
-            }),
-        },
-        ToolSpec {
-            name: "apply-effect",
-            description: "Apply an effect to a layer in After Effects",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "compId": { "type": "integer", "minimum": 1 },
-                    "compIndex": { "type": "integer", "minimum": 1 },
-                    "compName": { "type": "string" },
-                    "layerId": { "type": "integer", "minimum": 1 },
-                    "layerIndex": { "type": "integer", "minimum": 1 },
-                    "layerName": { "type": "string" },
-                    "effectName": { "type": "string" },
-                    "effectMatchName": { "type": "string" },
-                    "effectCategory": { "type": "string" },
-                    "presetPath": { "type": "string" },
-                    "effectSettings": { "type": "object" }
-                }
-            }),
-        },
-        ToolSpec {
-            name: "apply-effect-template",
-            description: "Apply a predefined effect template to a layer in After Effects",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "compId": { "type": "integer", "minimum": 1 },
-                    "compIndex": { "type": "integer", "minimum": 1 },
-                    "compName": { "type": "string" },
-                    "layerId": { "type": "integer", "minimum": 1 },
-                    "layerIndex": { "type": "integer", "minimum": 1 },
-                    "layerName": { "type": "string" },
-                    "templateName": {
-                        "type": "string",
-                        "enum": [
-                            "gaussian-blur",
-                            "directional-blur",
-                            "color-balance",
-                            "brightness-contrast",
-                            "curves",
-                            "glow",
-                            "drop-shadow",
-                            "smooth-gradient",
-                            "cinematic-look",
-                            "text-pop"
-                        ]
-                    },
-                    "customSettings": { "type": "object" }
-                },
-                "required": ["templateName"]
-            }),
-        },
-        ToolSpec {
-            name: "list-supported-effects",
-            description: "List known effects and verify availability in the current After Effects environment",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "compId": { "type": "integer", "minimum": 1 },
-                    "compIndex": { "type": "integer", "minimum": 1 },
-                    "compName": { "type": "string" },
-                    "layerId": { "type": "integer", "minimum": 1 },
-                    "layerIndex": { "type": "integer", "minimum": 1 },
-                    "layerName": { "type": "string" },
-                    "includeUnavailable": { "type": "boolean" }
-                }
-            }),
-        },
-        ToolSpec {
-            name: "describe-effect",
-            description: "Describe available parameters for a specific effect by temporarily probing it on a layer",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "compId": { "type": "integer", "minimum": 1 },
-                    "compIndex": { "type": "integer", "minimum": 1 },
-                    "compName": { "type": "string" },
-                    "layerId": { "type": "integer", "minimum": 1 },
-                    "layerIndex": { "type": "integer", "minimum": 1 },
-                    "layerName": { "type": "string" },
-                    "effectName": { "type": "string" },
-                    "effectMatchName": { "type": "string" }
-                }
-            }),
-        },
-        ToolSpec {
             name: "save-frame-png",
-            description: "Save a single frame from a composition as PNG without using the render queue",
+            description:
+                "Save a single frame from a composition as PNG without using the render queue",
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -327,130 +266,13 @@ pub fn tool_specs() -> Vec<ToolSpec> {
                     "timeSeconds": { "type": "number", "minimum": 0 },
                     "outputPath": { "type": "string" },
                     "overwrite": { "type": "boolean" },
-                    "suppressDialogs": { "type": "boolean" }
-                },
-                "required": ["outputPath"]
-            }),
-        },
-        ToolSpec {
-            name: "render-queue-add",
-            description: "Add a composition to the render queue without starting the render",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "compId": { "type": "integer", "minimum": 1 },
-                    "compIndex": { "type": "integer", "minimum": 1 },
-                    "compName": { "type": "string" },
-                    "outputPath": { "type": "string" },
-                    "renderSettingsTemplate": { "type": "string" },
-                    "outputModuleTemplate": { "type": "string" },
-                    "timeSpanStart": { "type": "number", "minimum": 0 },
-                    "timeSpanDuration": { "type": "number", "minimum": 0 },
-                    "suppressDialogs": { "type": "boolean" }
-                },
-                "required": ["outputPath"]
-            }),
-        },
-        ToolSpec {
-            name: "render-queue-status",
-            description: "Get status information for a render queue item",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "queueIndex": { "type": "integer", "minimum": 1 }
-                },
-                "required": ["queueIndex"]
-            }),
-        },
-        ToolSpec {
-            name: "render-queue-start",
-            description: "Start render queue processing and wait until completion",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "queueIndex": { "type": "integer", "minimum": 1 },
-                    "includeItems": { "type": "boolean" },
                     "suppressDialogs": { "type": "boolean" },
-                    "waitTimeoutSeconds": { "type": "integer", "minimum": 1 }
-                }
-            }),
-        },
-        ToolSpec {
-            name: "render-queue-is-rendering",
-            description: "Check whether After Effects is currently rendering",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "queueIndex": { "type": "integer", "minimum": 1 },
-                    "includeItems": { "type": "boolean" }
-                }
-            }),
-        },
-        ToolSpec {
-            name: "set-current-time",
-            description: "Set the current time indicator for a composition",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "compId": { "type": "integer", "minimum": 1 },
-                    "compIndex": { "type": "integer", "minimum": 1 },
-                    "compName": { "type": "string" },
-                    "timeSeconds": { "type": "number", "minimum": 0 },
-                    "suppressDialogs": { "type": "boolean" }
+                    "timeoutMs": { "type": "integer", "minimum": 1 },
+                    "resultRetentionSeconds": { "type": "integer", "minimum": 1, "maximum": 86400 },
+                    "targetInstanceId": { "type": "string", "minLength": 1 },
+                    "targetVersion": { "type": "string", "minLength": 1 }
                 },
-                "required": ["timeSeconds"]
-            }),
-        },
-        ToolSpec {
-            name: "get-current-time",
-            description: "Get the current time indicator for a composition",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "compId": { "type": "integer", "minimum": 1 },
-                    "compIndex": { "type": "integer", "minimum": 1 },
-                    "compName": { "type": "string" }
-                }
-            }),
-        },
-        ToolSpec {
-            name: "set-work-area",
-            description: "Set the work area start and duration for a composition",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "compId": { "type": "integer", "minimum": 1 },
-                    "compIndex": { "type": "integer", "minimum": 1 },
-                    "compName": { "type": "string" },
-                    "workAreaStart": { "type": "number", "minimum": 0 },
-                    "workAreaDuration": { "type": "number", "minimum": 0 },
-                    "suppressDialogs": { "type": "boolean" }
-                },
-                "required": ["workAreaStart", "workAreaDuration"]
-            }),
-        },
-        ToolSpec {
-            name: "get-work-area",
-            description: "Get the work area start and duration for a composition",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "compId": { "type": "integer", "minimum": 1 },
-                    "compIndex": { "type": "integer", "minimum": 1 },
-                    "compName": { "type": "string" }
-                }
-            }),
-        },
-        ToolSpec {
-            name: "get-composition-markers",
-            description: "Get composition markers for a composition",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "compId": { "type": "integer", "minimum": 1 },
-                    "compIndex": { "type": "integer", "minimum": 1 },
-                    "compName": { "type": "string" }
-                }
+                "required": ["outputPath"]
             }),
         },
         ToolSpec {
@@ -462,188 +284,13 @@ pub fn tool_specs() -> Vec<ToolSpec> {
                     "folderPath": { "type": "string" },
                     "extension": { "type": "string" },
                     "prefix": { "type": "string" },
-                    "maxAgeSeconds": { "type": "number", "minimum": 0 }
+                    "maxAgeSeconds": { "type": "number", "minimum": 0 },
+                    "timeoutMs": { "type": "integer", "minimum": 1 },
+                    "resultRetentionSeconds": { "type": "integer", "minimum": 1, "maximum": 86400 },
+                    "targetInstanceId": { "type": "string", "minLength": 1 },
+                    "targetVersion": { "type": "string", "minLength": 1 }
                 },
                 "required": ["folderPath"]
-            }),
-        },
-        ToolSpec {
-            name: "set-suppress-dialogs",
-            description: "Enable or disable dialog suppression in After Effects",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "enabled": { "type": "boolean" }
-                },
-                "required": ["enabled"]
-            }),
-        },
-        ToolSpec {
-            name: "get-suppress-dialogs",
-            description: "Get current dialog suppression state in After Effects",
-            input_schema: json!({
-                "type": "object",
-                "properties": {}
-            }),
-        },
-        ToolSpec {
-            name: "project-open",
-            description: "Open an After Effects project file (set interactive=true to allow user dialogs)",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "filePath": { "type": "string" },
-                    "closeCurrent": { "type": "boolean" },
-                    "closeOption": { "type": "string", "enum": ["SAVE_CHANGES", "DO_NOT_SAVE_CHANGES", "PROMPT_TO_SAVE_CHANGES"] },
-                    "saveAsPath": { "type": "string" },
-                    "interactive": { "type": "boolean" },
-                    "suppressDialogs": { "type": "boolean" }
-                },
-                "required": ["filePath"]
-            }),
-        },
-        ToolSpec {
-            name: "project-close",
-            description: "Close the current After Effects project (set interactive=true to allow user dialogs)",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "closeOption": { "type": "string", "enum": ["SAVE_CHANGES", "DO_NOT_SAVE_CHANGES", "PROMPT_TO_SAVE_CHANGES"] },
-                    "saveAsPath": { "type": "string" },
-                    "interactive": { "type": "boolean" },
-                    "suppressDialogs": { "type": "boolean" }
-                }
-            }),
-        },
-        ToolSpec {
-            name: "project-save",
-            description: "Save the current After Effects project; set interactive=true to allow Save As dialog when path is unknown",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "saveAsPath": { "type": "string" },
-                    "filePath": { "type": "string" },
-                    "path": { "type": "string" },
-                    "interactive": { "type": "boolean" },
-                    "suppressDialogs": { "type": "boolean" }
-                }
-            }),
-        },
-        ToolSpec {
-            name: "project-save-as",
-            description: "Save the current After Effects project to a new file path",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "filePath": { "type": "string" },
-                    "suppressDialogs": { "type": "boolean" }
-                },
-                "required": ["filePath"]
-            }),
-        },
-        ToolSpec {
-            name: "application-quit",
-            description: "Gracefully quit After Effects after optionally closing/saving the current project",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "closeProject": { "type": "boolean" },
-                    "closeOption": { "type": "string", "enum": ["SAVE_CHANGES", "DO_NOT_SAVE_CHANGES", "PROMPT_TO_SAVE_CHANGES"] },
-                    "saveAsPath": { "type": "string" },
-                    "interactive": { "type": "boolean" },
-                    "suppressDialogs": { "type": "boolean" }
-                }
-            }),
-        },
-        ToolSpec {
-            name: "mcp_aftereffects_applyEffect",
-            description: "Apply an effect to a layer in After Effects",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "compId": { "type": "integer", "minimum": 1 },
-                    "compIndex": { "type": "integer", "minimum": 1 },
-                    "compName": { "type": "string" },
-                    "layerId": { "type": "integer", "minimum": 1 },
-                    "layerIndex": { "type": "integer", "minimum": 1 },
-                    "layerName": { "type": "string" },
-                    "effectName": { "type": "string" },
-                    "effectMatchName": { "type": "string" },
-                    "effectSettings": { "type": "object" }
-                }
-            }),
-        },
-        ToolSpec {
-            name: "mcp_aftereffects_applyEffectTemplate",
-            description: "Apply a predefined effect template to a layer in After Effects",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "compId": { "type": "integer", "minimum": 1 },
-                    "compIndex": { "type": "integer", "minimum": 1 },
-                    "compName": { "type": "string" },
-                    "layerId": { "type": "integer", "minimum": 1 },
-                    "layerIndex": { "type": "integer", "minimum": 1 },
-                    "layerName": { "type": "string" },
-                    "templateName": {
-                        "type": "string",
-                        "enum": [
-                            "gaussian-blur",
-                            "directional-blur",
-                            "color-balance",
-                            "brightness-contrast",
-                            "curves",
-                            "glow",
-                            "drop-shadow",
-                            "smooth-gradient",
-                            "cinematic-look",
-                            "text-pop"
-                        ]
-                    },
-                    "customSettings": { "type": "object" }
-                },
-                "required": ["templateName"]
-            }),
-        },
-        ToolSpec {
-            name: "mcp_aftereffects_listSupportedEffects",
-            description: "List known effects and verify availability in the current After Effects environment",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "compId": { "type": "integer", "minimum": 1 },
-                    "compIndex": { "type": "integer", "minimum": 1 },
-                    "compName": { "type": "string" },
-                    "layerId": { "type": "integer", "minimum": 1 },
-                    "layerIndex": { "type": "integer", "minimum": 1 },
-                    "layerName": { "type": "string" },
-                    "includeUnavailable": { "type": "boolean" }
-                }
-            }),
-        },
-        ToolSpec {
-            name: "mcp_aftereffects_describeEffect",
-            description: "Describe available parameters for a specific effect by temporarily probing it on a layer",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "compId": { "type": "integer", "minimum": 1 },
-                    "compIndex": { "type": "integer", "minimum": 1 },
-                    "compName": { "type": "string" },
-                    "layerId": { "type": "integer", "minimum": 1 },
-                    "layerIndex": { "type": "integer", "minimum": 1 },
-                    "layerName": { "type": "string" },
-                    "effectName": { "type": "string" },
-                    "effectMatchName": { "type": "string" }
-                }
-            }),
-        },
-        ToolSpec {
-            name: "mcp_aftereffects_get_effects_help",
-            description: "Get help on using After Effects effects",
-            input_schema: json!({
-                "type": "object",
-                "properties": {}
             }),
         },
         ToolSpec {
@@ -854,14 +501,17 @@ pub fn general_help_text() -> &'static str {
 To use this integration with After Effects, follow these steps:
 
 1. Install bridge panel script with the installer command
-2. Open Adobe After Effects
-3. Open Window > mcp-bridge-auto.jsx
-4. Enable "Auto-run commands"
-5. Use tools from MCP client and read back results
+2. Start the broker with `ae-mcp serve-daemon` or install/start the daemon service
+3. Open Adobe After Effects
+4. Open Window > mcp-bridge-auto.jsx
+5. Enable "Auto-run commands"
+6. Use tools from MCP client and read back results
 
 Best practices:
+- Use list-ae-instances when multiple After Effects versions are open
+- Specify targetInstanceId or targetVersion when more than one AE instance is active
 - Prefer compId/layerId when available to avoid index drift
-- Call get-results after queuing any tool command
+- Use get-jsx-result with requestId after a timeout
 - save-frame-png is optimized for fast previews (single PNG only)
 - Use render-queue-start when you want MCP to wait until render completion
 - Use suppressDialogs (default true) to avoid blocking dialogs
