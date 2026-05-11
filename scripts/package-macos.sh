@@ -133,7 +133,7 @@ pkgbuild \
   --root "$PKG_ROOT" \
   --scripts "$PKG_SCRIPTS_DIR" \
   --identifier "io.github.aodaruma.after-effects-mcp-rs" \
-  --version "0.1.0" \
+  --version "0.2.0" \
   --install-location "/" \
   "$PKG_PATH"
 

@@ -96,7 +96,7 @@ try {
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
   <Package Name="After Effects MCP (Rust)"
            Manufacturer="after-effects-mcp-rs contributors"
-           Version="0.1.0.0"
+           Version="0.2.0.0"
            UpgradeCode="D7C1D860-4DA9-4E1E-B64A-8F64B7D9CC6E"
            Compressed="yes">
     <MediaTemplate EmbedCab="yes" />
