@@ -1,0 +1,91 @@
+name: Release On Main
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: write
+
+jobs:
+  tag-and-dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Resolve workspace version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          version="$(
+            awk '
+              /^\[workspace\.package\]/ { in_section=1; next }
+              /^\[/ && in_section { in_section=0 }
+              in_section && /^version = / {
+                gsub(/"/, "", $3)
+                print $3
+                exit
+              }
+            ' Cargo.toml
+          )"
+
+          if [[ -z "$version" ]]; then
+            echo "::error::Failed to determine workspace version from Cargo.toml"
+            exit 1
+          fi
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+
+      - name: Check whether tag already exists
+        id: tag_check
+        shell: bash
+        env:
+          TAG_NAME: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          git fetch --force --tags origin
+          if git rev-parse -q --verify "refs/tags/$TAG_NAME" >/dev/null; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create and push release tag
+        if: ${{ steps.tag_check.outputs.exists != 'true' }}
+        shell: bash
+        env:
+          TAG_NAME: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG_NAME" -m "Release $TAG_NAME"
+          git push origin "refs/tags/$TAG_NAME"
+
+      - name: Dispatch RC Release workflow
+        if: ${{ steps.tag_check.outputs.exists != 'true' }}
+        uses: actions/github-script@v8
+        env:
+          TAG_NAME: ${{ steps.version.outputs.tag }}
+        with:
+          script: |
+            await github.rest.actions.createWorkflowDispatch({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: "rc-release.yml",
+              ref: "main",
+              inputs: {
+                tag: process.env.TAG_NAME
+              }
+            });

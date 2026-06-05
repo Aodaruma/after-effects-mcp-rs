@@ -24,8 +24,8 @@
 
 ## 4. リリース実施
 
-1. `vX.Y.Z` タグ作成
-2. CI完了確認（installer-build / rc-release）
+1. `Cargo.toml` の workspace version を更新して `main` へマージ
+2. CI完了確認（release-on-main / rc-release）
 3. アーティファクト公開
 4. リリースノート公開
 
@@ -34,4 +34,3 @@
 1. 初期ユーザーの導入可否確認
 2. 重大不具合（P1）監視
 3. Hotfix要否判断
-
