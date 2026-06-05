@@ -6,22 +6,6 @@ REQUIRE_PKG="${REQUIRE_PKG:-false}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-PACKAGE_VERSION="$(
-  awk '
-    /^\[workspace\.package\]/ { in_section=1; next }
-    /^\[/ && in_section { in_section=0 }
-    in_section && /^version = / {
-      gsub(/"/, "", $3)
-      print $3
-      exit
-    }
-  ' "$REPO_ROOT/Cargo.toml"
-)"
-
-if [[ -z "$PACKAGE_VERSION" ]]; then
-  echo "Failed to determine workspace version from Cargo.toml" >&2
-  exit 1
-fi
 
 mkdir -p "$OUTPUT_DIR"
 
@@ -165,7 +149,7 @@ pkgbuild \
   --root "$PKG_ROOT" \
   --scripts "$PKG_SCRIPTS_DIR" \
   --identifier "io.github.aodaruma.after-effects-mcp-rs" \
-  --version "$PACKAGE_VERSION" \
+  --version "0.2.0" \
   --install-location "/" \
   "$PKG_PATH"
 

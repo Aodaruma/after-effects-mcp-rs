@@ -5,11 +5,6 @@ on:
     tags:
       - "v*"
   workflow_dispatch:
-    inputs:
-      tag:
-        description: "Release tag to build, for example v0.3.0"
-        required: true
-        type: string
 
 permissions:
   contents: write
@@ -19,47 +14,27 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       on_main: ${{ steps.check.outputs.on_main }}
-      tag_name: ${{ steps.check.outputs.tag_name }}
-      checkout_ref: ${{ steps.check.outputs.checkout_ref }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
-      - name: Resolve tag and verify tag commit is on main
+      - name: Verify tag commit is on main
         id: check
         shell: bash
-        env:
-          INPUT_TAG: ${{ inputs.tag }}
         run: |
-          set -euo pipefail
-
-          tag="${INPUT_TAG:-}"
-          if [[ -z "$tag" && "${GITHUB_REF_TYPE}" == "tag" ]]; then
-            tag="${GITHUB_REF_NAME}"
+          if [[ "${GITHUB_REF_TYPE}" != "tag" ]]; then
+            echo "on_main=true" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
 
-          if [[ -z "$tag" ]]; then
-            echo "::error::No release tag was provided."
-            exit 1
-          fi
-
-          echo "tag_name=$tag" >> "$GITHUB_OUTPUT"
-          echo "checkout_ref=refs/tags/$tag" >> "$GITHUB_OUTPUT"
-
-          git fetch --force --tags origin main
-          if ! git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
-            echo "::error::Tag $tag was not found in the repository."
-            exit 1
-          fi
-
-          tag_sha="$(git rev-list -n 1 "refs/tags/$tag")"
-          if git merge-base --is-ancestor "$tag_sha" "origin/main"; then
+          git fetch origin main
+          if git merge-base --is-ancestor "$GITHUB_SHA" "origin/main"; then
             echo "on_main=true" >> "$GITHUB_OUTPUT"
           else
             echo "on_main=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::Tag $tag is not based on origin/main. Release steps will be skipped."
+            echo "::warning::Tag ${GITHUB_REF_NAME} is not based on origin/main. Release steps will be skipped."
           fi
 
   windows-rc:
@@ -73,8 +48,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
-        with:
-          ref: ${{ needs.verify-tag-source.outputs.checkout_ref }}
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -138,8 +111,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
-        with:
-          ref: ${{ needs.verify-tag-source.outputs.checkout_ref }}
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -184,7 +155,7 @@ jobs:
       - verify-tag-source
       - windows-rc
       - macos-rc
-    if: ${{ needs.verify-tag-source.outputs.on_main == 'true' && needs.verify-tag-source.outputs.tag_name != '' }}
+    if: ${{ needs.verify-tag-source.outputs.on_main == 'true' && startsWith(github.ref, 'refs/tags/v') }}
     runs-on: ubuntu-latest
     steps:
       - name: Download Windows artifacts
@@ -203,11 +174,10 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ needs.verify-tag-source.outputs.tag_name }}
         run: |
           set -euo pipefail
 
-          tag="${RELEASE_TAG}"
+          tag="${GITHUB_REF_NAME}"
           repo="${GITHUB_REPOSITORY}"
 
           # Collect only distributable artifacts (exclude intermediate files like stage/pkgroot).

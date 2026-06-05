@@ -20,40 +20,6 @@ function Find-WixCommand {
     return $null
 }
 
-function Get-WorkspaceVersion {
-    param([string]$CargoTomlPath)
-
-    $inWorkspacePackage = $false
-    foreach ($line in Get-Content -Path $CargoTomlPath) {
-        if ($line -match '^\[workspace\.package\]') {
-            $inWorkspacePackage = $true
-            continue
-        }
-        if ($inWorkspacePackage -and $line -match '^\[') {
-            $inWorkspacePackage = $false
-        }
-        if ($inWorkspacePackage -and $line -match '^version\s*=\s*"([^"]+)"') {
-            return $matches[1]
-        }
-    }
-
-    throw "Workspace version not found in $CargoTomlPath"
-}
-
-function Convert-ToMsiVersion {
-    param([string]$SemVer)
-
-    $core = ($SemVer -split '-', 2)[0]
-    $parts = $core.Split('.')
-    while ($parts.Count -lt 3) {
-        $parts += "0"
-    }
-    if ($parts.Count -gt 3) {
-        $parts = $parts[0..2]
-    }
-    return (($parts + "0") -join '.')
-}
-
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $output = Resolve-Path -Path $OutputDir -ErrorAction SilentlyContinue
 if (-not $output) {
@@ -63,9 +29,6 @@ if (-not $output) {
 
 Push-Location $repoRoot
 try {
-    $workspaceVersion = Get-WorkspaceVersion -CargoTomlPath (Join-Path $repoRoot "Cargo.toml")
-    $msiVersion = Convert-ToMsiVersion -SemVer $workspaceVersion
-
     Write-Host "Building release binaries..."
     cargo build --release -p ae-mcp -p pr-mcp
 
@@ -146,7 +109,7 @@ try {
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
   <Package Name="After Effects MCP (Rust)"
            Manufacturer="after-effects-mcp-rs contributors"
-           Version="$msiVersion"
+           Version="0.2.0.0"
            UpgradeCode="D7C1D860-4DA9-4E1E-B64A-8F64B7D9CC6E"
            Compressed="yes">
     <MediaTemplate EmbedCab="yes" />

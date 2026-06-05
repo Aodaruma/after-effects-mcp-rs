@@ -69,7 +69,7 @@ APPLE_APP_SPECIFIC_PASSWORD="<app-password>" \
 
 ## 4. RC リリース手順
 
-1. `vX.Y.Z-rcN` タグを作成して push、または `RC Release` を `tag` 入力付きで手動実行
+1. `vX.Y.Z-rcN` タグを作成して push
 2. `RC Release` workflow を確認
 3. 生成物（Windows/macOS）をダウンロード
 4. 署名/公証がスキップされていないことを確認
@@ -79,3 +79,4 @@ APPLE_APP_SPECIFIC_PASSWORD="<app-password>" \
 1. シークレット未設定時、ワークフローは警告を出して署名工程をスキップします。
 2. 実運用では本番リリース前に必ず署名済みファイルの検証を行ってください。
 3. macOS証明書運用は組織ポリシーに合わせてkeychainの扱いを固定化してください。
+
