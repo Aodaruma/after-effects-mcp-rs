@@ -501,7 +501,7 @@ pub fn general_help_text() -> &'static str {
 To use this integration with After Effects, follow these steps:
 
 1. Install bridge panel script with the installer command
-2. Start the broker with `ae-mcp serve-daemon` or install/start the daemon service
+2. Start the broker with `ae-mcp serve-daemon`; on Windows you can also use `ae-mcp autostart install` and `ae-mcp autostart start`
 3. Open Adobe After Effects
 4. Open Window > mcp-bridge-auto.jsx
 5. Enable "Auto-run commands"

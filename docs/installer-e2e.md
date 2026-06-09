@@ -41,13 +41,18 @@ REQUIRE_PKG=true ./scripts/package-macos.sh ./dist/macos
 2. `ae-mcp` バイナリが所定の場所へ配置される
 3. `ae-mcp --help` が実行できる
 
-## 3.2 サービス
+## 3.2 Windows autostart / macOS service
 
-1. `service install`
-2. `service start`
-3. `service status`
-4. `service stop`
-5. `service uninstall`
+1. Windows: `autostart install`
+2. Windows: `autostart start`
+3. Windows: `autostart status`
+4. Windows: `autostart stop`
+5. Windows: `autostart uninstall`
+6. macOS: `service install`
+7. macOS: `service start`
+8. macOS: `service status`
+9. macOS: `service stop`
+10. macOS: `service uninstall`
 
 ## 3.3 MCP + AE ブリッジ
 
@@ -60,8 +65,9 @@ REQUIRE_PKG=true ./scripts/package-macos.sh ./dist/macos
 
 ## 4. 失敗時の確認ポイント
 
-1. Windowsで `OpenSCManager FAILED 5`:
-   - 管理者PowerShellで再実行
+1. Windowsで daemon が起動しない:
+   - `ae-mcp autostart status` を確認
+   - 必要なら `ae-mcp autostart install` と `ae-mcp autostart start` を再実行
 2. macOSでpkg生成失敗:
    - `pkgbuild --version` を確認
 3. AE結果が返らない:

@@ -1,6 +1,7 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use mcp_core::{default_bridge_root_dir_named, AppConfig, BridgePaths};
+use std::fs;
 use std::path::PathBuf;
 use std::time::Duration;
 use tokio::time::sleep;
@@ -38,6 +39,13 @@ enum Commands {
         #[command(subcommand)]
         command: ServiceCommands,
     },
+    /// Windows autostart management for the daemon.
+    Autostart {
+        #[arg(long, default_value = "PremiereMcp")]
+        entry_name: String,
+        #[command(subcommand)]
+        command: AutostartCommands,
+    },
     /// Stage 2: direct bridge operations for validation.
     Bridge {
         #[command(subcommand)]
@@ -65,6 +73,15 @@ enum BridgeCommands {
 
 #[derive(Debug, Subcommand)]
 enum ServiceCommands {
+    Install,
+    Uninstall,
+    Start,
+    Stop,
+    Status,
+}
+
+#[derive(Debug, Subcommand)]
+enum AutostartCommands {
     Install,
     Uninstall,
     Start,
@@ -107,6 +124,10 @@ async fn main() -> Result<()> {
             display_name,
             command,
         } => run_service_command(cli_config, service_name, display_name, command),
+        Commands::Autostart {
+            entry_name,
+            command,
+        } => run_autostart_command(cli_config, cfg, entry_name, command),
         Commands::Bridge { command } => run_bridge_command(cfg, command),
         Commands::Health => {
             println!("status=ok");
@@ -129,6 +150,8 @@ async fn serve_daemon(once: bool) -> Result<()> {
     if once {
         return Ok(());
     }
+    let bridge_root = default_bridge_root_dir_named("pr-mcp-bridge");
+    let _pid_file = DaemonPidFile::create(bridge_root.join("daemon.pid"))?;
     loop {
         info!("serve-daemon heartbeat");
         sleep(Duration::from_secs(60)).await;
@@ -142,11 +165,12 @@ fn run_service_command(
     command: ServiceCommands,
 ) -> Result<()> {
     let current_exe = std::env::current_exe()?;
-    let mut args = vec!["serve-daemon".to_string()];
+    let mut args = Vec::new();
     if let Some(path) = cli_config {
         args.push("--config".to_string());
         args.push(path.to_string_lossy().to_string());
     }
+    args.push("serve-daemon".to_string());
 
     let service_cfg = platform_service::ServiceConfig {
         service_name,
@@ -164,6 +188,40 @@ fn run_service_command(
         ServiceCommands::Status => platform_service::ServiceAction::Status,
     };
     let output = platform_service::run(action, &service_cfg)?;
+    println!("{output}");
+    Ok(())
+}
+
+fn run_autostart_command(
+    cli_config: Option<PathBuf>,
+    cfg: AppConfig,
+    entry_name: String,
+    command: AutostartCommands,
+) -> Result<()> {
+    let current_exe = std::env::current_exe()?;
+    let mut args = Vec::new();
+    if let Some(path) = cli_config {
+        args.push("--config".to_string());
+        args.push(path.to_string_lossy().to_string());
+    }
+    args.push("serve-daemon".to_string());
+
+    let autostart_cfg = platform_service::AutostartConfig {
+        app_name: "Premiere Pro MCP".to_string(),
+        entry_name,
+        binary_path: current_exe,
+        args,
+        pid_file: cfg.bridge.root_dir.join("daemon.pid"),
+    };
+
+    let action = match command {
+        AutostartCommands::Install => platform_service::AutostartAction::Install,
+        AutostartCommands::Uninstall => platform_service::AutostartAction::Uninstall,
+        AutostartCommands::Start => platform_service::AutostartAction::Start,
+        AutostartCommands::Stop => platform_service::AutostartAction::Stop,
+        AutostartCommands::Status => platform_service::AutostartAction::Status,
+    };
+    let output = platform_service::run_autostart(action, &autostart_cfg)?;
     println!("{output}");
     Ok(())
 }
@@ -192,6 +250,37 @@ fn run_bridge_command(cfg: AppConfig, command: BridgeCommands) -> Result<()> {
             let raw = bridge.read_results_with_stale_warning(Duration::from_secs(stale_seconds))?;
             println!("{raw}");
             Ok(())
+        }
+    }
+}
+
+struct DaemonPidFile {
+    path: PathBuf,
+    pid: u32,
+}
+
+impl DaemonPidFile {
+    fn create(path: PathBuf) -> Result<Self> {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let pid = std::process::id();
+        let exe = std::env::current_exe()?;
+        fs::write(&path, format!("{pid}\n{}\n", exe.display()))?;
+        Ok(Self { path, pid })
+    }
+}
+
+impl Drop for DaemonPidFile {
+    fn drop(&mut self) {
+        let Ok(raw) = fs::read_to_string(&self.path) else {
+            return;
+        };
+        let Some(pid_line) = raw.lines().next() else {
+            return;
+        };
+        if pid_line.trim() == self.pid.to_string() {
+            let _ = fs::remove_file(&self.path);
         }
     }
 }

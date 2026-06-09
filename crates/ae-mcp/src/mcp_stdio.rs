@@ -776,7 +776,7 @@ fn run_daemon_command(
 fn call_daemon(cfg: &AppConfig, request: Value, timeout_ms: u64) -> Result<Value> {
     let mut stream = TcpStream::connect(&cfg.daemon_addr).with_context(|| {
         format!(
-            "failed to connect to ae-mcp daemon at {}. Start it with `ae-mcp serve-daemon` or install/start the service.",
+            "failed to connect to ae-mcp daemon at {}. Start it with `ae-mcp serve-daemon`, or on Windows use `ae-mcp autostart install` and `ae-mcp autostart start`.",
             cfg.daemon_addr
         )
     })?;

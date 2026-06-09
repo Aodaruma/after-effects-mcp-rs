@@ -75,7 +75,7 @@ daemon は request ごとに `requestId` を発行し、状態を `~/Documents/a
 2. `mcp-bridge-auto.jsx` を After Effects の `ScriptUI Panels` folder に配置します。
 3. After Effects で `Allow Scripts to Write Files and Access Network` を有効化します。
 4. AE を再起動し、`Window > mcp-bridge-auto.jsx` を開いて `Auto-run commands` を ON にします。
-5. `ae-mcp serve-daemon` を起動するか、service を install/start します。
+5. `ae-mcp serve-daemon` を起動します。Windows では `ae-mcp autostart install` でログオン時自動起動を登録し、`ae-mcp autostart start` ですぐ起動できます。
 6. MCP クライアントに `ae-mcp serve-stdio` を登録します。
 7. `list-ae-instances` を実行し、AE が見えていることを確認します。
 
@@ -106,16 +106,11 @@ powershell -ExecutionPolicy Bypass -File .\scripts\install-bridge.ps1
 bash ./scripts/install-bridge.sh
 ```
 
-インストール済み binary で daemon を service 起動する例:
+Windows では、現在のユーザーにログオン時自動起動を登録し、今すぐ daemon を起動できます。
 
 ```powershell
-& "C:\Program Files\AfterEffectsMcp\ae-mcp.exe" service install
-& "C:\Program Files\AfterEffectsMcp\ae-mcp.exe" service start
-```
-
-```bash
-ae-mcp service install
-ae-mcp service start
+& "C:\Program Files\AfterEffectsMcp\ae-mcp.exe" autostart install
+& "C:\Program Files\AfterEffectsMcp\ae-mcp.exe" autostart start
 ```
 
 Codex CLI への登録例:
@@ -297,7 +292,7 @@ target選択:
 ## 7. トラブルシュート
 
 - 実行系toolがdaemon接続エラーを返す:
-  - `ae-mcp serve-daemon` を起動、またはserviceをinstall/start
+  - `ae-mcp serve-daemon` を起動、または Windows では `ae-mcp autostart install` と `ae-mcp autostart start` を実行
   - `health` で `daemon_addr` を確認
 - `list-ae-instances` が空:
   - AE パネル未起動
@@ -317,8 +312,9 @@ target選択:
   - `~/Documents/ae-mcp-bridge/instances/<instanceId>/ae_command.json`
   - `~/Documents/ae-mcp-bridge/instances/<instanceId>/ae_mcp_result.json`
   - `~/Documents/ae-mcp-bridge/registry/<requestId>.json`
-- Windows で `service install` が Access Denied:
-  - 管理者権限シェル（`gsudo` など）で実行
+- Windows で autostart が未登録:
+  - `ae-mcp autostart install` を実行
+  - `ae-mcp autostart status` で状態確認
 - `-AfterEffectsPath` が `C:\Program` に分断される:
   - シングルクォートで指定
     - `-AfterEffectsPath 'C:\Program Files\Adobe\Adobe After Effects 2025'`

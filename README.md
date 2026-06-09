@@ -75,7 +75,7 @@ Execution is FIFO within the same AE instance. Different AE instances can run in
 2. Install `mcp-bridge-auto.jsx` into After Effects' `ScriptUI Panels` folder.
 3. In After Effects, enable `Allow Scripts to Write Files and Access Network`.
 4. Restart AE, open `Window > mcp-bridge-auto.jsx`, and enable `Auto-run commands`.
-5. Start the local broker with `ae-mcp serve-daemon` or install/start the service.
+5. Start the local broker with `ae-mcp serve-daemon`. On Windows, you can install logon autostart with `ae-mcp autostart install` and start it immediately with `ae-mcp autostart start`.
 6. Register `ae-mcp serve-stdio` with your MCP client.
 7. Run `list-ae-instances` to confirm that AE is visible to the daemon.
 
@@ -106,16 +106,11 @@ powershell -ExecutionPolicy Bypass -File .\scripts\install-bridge.ps1
 bash ./scripts/install-bridge.sh
 ```
 
-Start the daemon as a service when using an installed binary:
+On Windows, install logon autostart for the current user and start the daemon now:
 
 ```powershell
-& "C:\Program Files\AfterEffectsMcp\ae-mcp.exe" service install
-& "C:\Program Files\AfterEffectsMcp\ae-mcp.exe" service start
-```
-
-```bash
-ae-mcp service install
-ae-mcp service start
+& "C:\Program Files\AfterEffectsMcp\ae-mcp.exe" autostart install
+& "C:\Program Files\AfterEffectsMcp\ae-mcp.exe" autostart start
 ```
 
 Register with Codex CLI:
@@ -297,7 +292,7 @@ Target selection:
 ## 7. Troubleshooting
 
 - Execution tools return daemon connection errors:
-  - start `ae-mcp serve-daemon`, or install/start the service
+  - start `ae-mcp serve-daemon`, or on Windows run `ae-mcp autostart install` and `ae-mcp autostart start`
   - confirm `health` shows the expected `daemon_addr`
 - `list-ae-instances` returns an empty list:
   - AE panel not open
@@ -317,8 +312,9 @@ Target selection:
   - `~/Documents/ae-mcp-bridge/instances/<instanceId>/ae_command.json`
   - `~/Documents/ae-mcp-bridge/instances/<instanceId>/ae_mcp_result.json`
   - `~/Documents/ae-mcp-bridge/registry/<requestId>.json`
-- `service install` access denied on Windows:
-  - run elevated shell (`gsudo` or Administrator PowerShell)
+- Windows autostart is not enabled:
+  - run `ae-mcp autostart install`
+  - check with `ae-mcp autostart status`
 - `-AfterEffectsPath` gets split into `C:\Program`:
   - quote with single quotes:
     - `-AfterEffectsPath 'C:\Program Files\Adobe\Adobe After Effects 2025'`

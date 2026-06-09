@@ -23,14 +23,14 @@ ae-mcp serve-stdio
 ae-mcp serve-daemon
 ```
 
-## 1.4 サービス管理
+## 1.4 Windows autostart 管理
 
 ```bash
-ae-mcp service install
-ae-mcp service start
-ae-mcp service status
-ae-mcp service stop
-ae-mcp service uninstall
+ae-mcp autostart install
+ae-mcp autostart start
+ae-mcp autostart status
+ae-mcp autostart stop
+ae-mcp autostart uninstall
 ```
 
 ## 2. ブリッジファイル
@@ -47,8 +47,9 @@ ae-mcp service uninstall
 
 ## 3. 典型障害と一次対応
 
-1. `OpenSCManager FAILED 5`
-- 管理者権限で `service` コマンドを再実行
+1. daemon に接続できない
+- `ae-mcp autostart status` で状態確認
+- 必要なら `ae-mcp autostart start` を実行
 
 2. `get-results` が stale warning
 - AEの `mcp-bridge-auto.jsx` を開く
@@ -60,7 +61,7 @@ ae-mcp service uninstall
 
 ## 4. 監視ポイント
 
-1. サービス稼働状態（OS service status）
+1. daemon 稼働状態（`ae-mcp autostart status`）
 2. 結果ファイル更新時刻
 3. MCPクライアントの呼び出し失敗率
 
@@ -69,4 +70,3 @@ ae-mcp service uninstall
 1. 実行コマンドと出力（stdout/stderr）
 2. `ae_command.json` / `ae_mcp_result.json` の内容
 3. AEバージョン、OSバージョン、実行ユーザー権限
-

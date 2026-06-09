@@ -161,22 +161,19 @@ After Effects MCP を使う際は、通常は non-interactive で実行するこ
 ユーザー操作に引き継ぐときだけ interactive=true を使ってダイアログ表示を許可する。
 ```
 
-## 7. サービス（daemon）登録を使う場合
+## 7. daemon 常駐化を使う場合
 
-`serve-daemon` と `service` サブコマンドは実装済みです。
+Windows は `autostart`、macOS は `service` を使います。
 
 ### 7.1 Windows
 
 ```powershell
-.\target\release\ae-mcp.exe service install
-.\target\release\ae-mcp.exe service status
-.\target\release\ae-mcp.exe service start
-.\target\release\ae-mcp.exe service stop
-.\target\release\ae-mcp.exe service uninstall
+.\target\release\ae-mcp.exe autostart install
+.\target\release\ae-mcp.exe autostart status
+.\target\release\ae-mcp.exe autostart start
+.\target\release\ae-mcp.exe autostart stop
+.\target\release\ae-mcp.exe autostart uninstall
 ```
-
-`OpenSCManager FAILED 5`（Access Denied）が出る場合:
-- 管理者権限の PowerShell で実行してください
 
 ### 7.2 macOS
 

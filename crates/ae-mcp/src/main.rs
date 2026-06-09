@@ -1,6 +1,7 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use mcp_core::AppConfig;
+use std::fs;
 use std::path::PathBuf;
 use std::time::Duration;
 use tracing::info;
@@ -38,6 +39,13 @@ enum Commands {
         #[command(subcommand)]
         command: ServiceCommands,
     },
+    /// Windows autostart management for the daemon.
+    Autostart {
+        #[arg(long, default_value = "AfterEffectsMcp")]
+        entry_name: String,
+        #[command(subcommand)]
+        command: AutostartCommands,
+    },
     /// Stage 2: direct bridge operations for validation.
     Bridge {
         #[command(subcommand)]
@@ -72,6 +80,15 @@ enum ServiceCommands {
     Status,
 }
 
+#[derive(Debug, Subcommand)]
+enum AutostartCommands {
+    Install,
+    Uninstall,
+    Start,
+    Stop,
+    Status,
+}
+
 fn init_tracing(level: &str) {
     let filter = tracing_subscriber::EnvFilter::try_new(level)
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
@@ -99,6 +116,10 @@ async fn main() -> Result<()> {
             display_name,
             command,
         } => run_service_command(cli_config, service_name, display_name, command),
+        Commands::Autostart {
+            entry_name,
+            command,
+        } => run_autostart_command(cli_config, cfg, entry_name, command),
         Commands::Bridge { command } => run_bridge_command(cfg, command),
         Commands::Health => {
             println!("status=ok");
@@ -122,6 +143,7 @@ async fn serve_daemon(cfg: AppConfig, once: bool) -> Result<()> {
     if once {
         return Ok(());
     }
+    let _pid_file = DaemonPidFile::create(cfg.bridge.root_dir.join("daemon.pid"))?;
     daemon::run_daemon_server(cfg)
 }
 
@@ -159,6 +181,40 @@ fn run_service_command(
     Ok(())
 }
 
+fn run_autostart_command(
+    cli_config: Option<PathBuf>,
+    cfg: AppConfig,
+    entry_name: String,
+    command: AutostartCommands,
+) -> Result<()> {
+    let current_exe = std::env::current_exe()?;
+    let mut args = Vec::new();
+    if let Some(path) = cli_config {
+        args.push("--config".to_string());
+        args.push(path.to_string_lossy().to_string());
+    }
+    args.push("serve-daemon".to_string());
+
+    let autostart_cfg = platform_service::AutostartConfig {
+        app_name: "After Effects MCP".to_string(),
+        entry_name,
+        binary_path: current_exe,
+        args,
+        pid_file: cfg.bridge.root_dir.join("daemon.pid"),
+    };
+
+    let action = match command {
+        AutostartCommands::Install => platform_service::AutostartAction::Install,
+        AutostartCommands::Uninstall => platform_service::AutostartAction::Uninstall,
+        AutostartCommands::Start => platform_service::AutostartAction::Start,
+        AutostartCommands::Stop => platform_service::AutostartAction::Stop,
+        AutostartCommands::Status => platform_service::AutostartAction::Status,
+    };
+    let output = platform_service::run_autostart(action, &autostart_cfg)?;
+    println!("{output}");
+    Ok(())
+}
+
 fn run_bridge_command(cfg: AppConfig, command: BridgeCommands) -> Result<()> {
     let bridge = bridge_core::BridgeClient::new(cfg)?;
     match command {
@@ -183,6 +239,37 @@ fn run_bridge_command(cfg: AppConfig, command: BridgeCommands) -> Result<()> {
             let raw = bridge.read_results_with_stale_warning(Duration::from_secs(stale_seconds))?;
             println!("{raw}");
             Ok(())
+        }
+    }
+}
+
+struct DaemonPidFile {
+    path: PathBuf,
+    pid: u32,
+}
+
+impl DaemonPidFile {
+    fn create(path: PathBuf) -> Result<Self> {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let pid = std::process::id();
+        let exe = std::env::current_exe()?;
+        fs::write(&path, format!("{pid}\n{}\n", exe.display()))?;
+        Ok(Self { path, pid })
+    }
+}
+
+impl Drop for DaemonPidFile {
+    fn drop(&mut self) {
+        let Ok(raw) = fs::read_to_string(&self.path) else {
+            return;
+        };
+        let Some(pid_line) = raw.lines().next() else {
+            return;
+        };
+        if pid_line.trim() == self.pid.to_string() {
+            let _ = fs::remove_file(&self.path);
         }
     }
 }
