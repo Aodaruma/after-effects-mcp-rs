@@ -219,24 +219,7 @@ fn dispatch_tool_inner(
         "run-jsx-file" => run_jsx_file_tool(cfg, bridge, args),
         "get-jsx-result" => get_jsx_result_tool(bridge, args),
         "list-premiere-instances" => list_premiere_instances_tool(cfg, bridge),
-        "run-script" => {
-            let script = args
-                .get("script")
-                .and_then(Value::as_str)
-                .ok_or_else(|| anyhow!("'script' is required"))?;
-            if !pr_core::is_allowed_script(script) {
-                return Ok(tool_error(format!(
-                    "Script \"{script}\" is not allowed. Allowed scripts are: {}",
-                    pr_core::ALLOWED_SCRIPTS.join(", ")
-                )));
-            }
-            let parameters = args.get("parameters").cloned().unwrap_or_else(|| json!({}));
-            bridge.clear_results_file()?;
-            bridge.write_command_file(script, parameters)?;
-            Ok(tool_text(format!(
-                "Command to run \"{script}\" has been queued.\nPlease ensure the \"Premiere MCP Bridge\" UXP panel is open in Premiere Pro.\nUse the \"get-results\" tool after a few seconds to check for results."
-            )))
-        }
+        "run-script" => run_script_tool(cfg, bridge, args),
         "get-results" => {
             if let Some(request_id) = args.get("requestId").and_then(Value::as_str) {
                 let record = bridge.get_request_record(request_id)?;
@@ -252,43 +235,37 @@ fn dispatch_tool_inner(
             }
         }
         "get-help" => Ok(tool_text(general_help_text().to_string())),
-        "list-sequences" => {
-            bridge.write_command_file("listSequences", args)?;
-            Ok(tool_text(
-                "Command to list sequences has been queued.\nUse the \"get-results\" tool after a few seconds to check for results."
-                    .to_string(),
-            ))
-        }
-        "get-active-sequence" => {
-            bridge.write_command_file("getActiveSequence", args)?;
-            Ok(tool_text(
-                "Command to get the active sequence has been queued.\nUse the \"get-results\" tool after a few seconds to check for results."
-                    .to_string(),
-            ))
-        }
-        "set-playhead-time" => {
-            bridge.write_command_file("setPlayheadTime", args)?;
-            Ok(tool_text(
-                "Command to set playhead time has been queued.\nUse the \"get-results\" tool after a few seconds to check for results."
-                    .to_string(),
-            ))
-        }
-        "export-sequence" => {
-            let output_path = args
-                .get("outputPath")
-                .and_then(Value::as_str)
-                .unwrap_or("unknown")
-                .to_string();
-            bridge.write_command_file("exportSequence", args)?;
-            Ok(tool_text(format!(
-                "Command to export sequence has been queued.\nOutput: {output_path}\nUse the \"get-results\" tool after a few seconds to check for results."
-            )))
-        }
         "run-bridge-test" => {
             run_direct_bridge_call(cfg, bridge, "ping", json!({}), "Error running bridge test")
         }
         _ => Ok(tool_error(format!("Unknown tool: {name}"))),
     }
+}
+
+fn run_script_tool(cfg: &AppConfig, bridge: &BridgeClient, args: Value) -> Result<Value> {
+    let script = required_non_empty_string(&args, "script")?;
+    if !pr_core::is_allowed_script(script) {
+        return Ok(tool_error(format!(
+            "Script \"{script}\" is not allowed. Allowed scripts are: {}",
+            pr_core::ALLOWED_SCRIPTS.join(", ")
+        )));
+    }
+
+    let parameters = args.get("parameters").cloned().unwrap_or_else(|| json!({}));
+    if !parameters.is_object() {
+        anyhow::bail!("'parameters' must be an object when provided");
+    }
+
+    let timeout_ms = timeout_ms_from_args(cfg, &args);
+    run_bridge_command(
+        cfg,
+        bridge,
+        script,
+        parameters,
+        &args,
+        timeout_ms,
+        "Error running Premiere script",
+    )
 }
 
 fn run_jsx_tool(cfg: &AppConfig, bridge: &BridgeClient, args: Value) -> Result<Value> {
@@ -666,6 +643,9 @@ mod tests {
         assert!(tools
             .iter()
             .any(|t| t.get("name").and_then(Value::as_str) == Some("run-jsx-file")));
+        assert!(tools
+            .iter()
+            .any(|t| t.get("name").and_then(Value::as_str) == Some("run-script")));
         assert!(tools
             .iter()
             .all(|t| t.get("name").and_then(Value::as_str) != Some("list-sequences")));

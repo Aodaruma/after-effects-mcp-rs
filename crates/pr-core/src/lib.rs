@@ -3,8 +3,10 @@ use serde_json::{json, Value};
 
 pub const ALLOWED_SCRIPTS: &[&str] = &[
     "ping",
+    "getProjectInfo",
     "listSequences",
     "getActiveSequence",
+    "getSequenceInfo",
     "setPlayheadTime",
     "exportSequence",
 ];
@@ -49,6 +51,25 @@ pub fn tool_specs() -> Vec<ToolSpec> {
                     "targetVersion": { "type": "string", "minLength": 1 }
                 },
                 "required": ["path", "mode", "description"]
+            }),
+        },
+        ToolSpec {
+            name: "run-script",
+            description: "Run an allowlisted Premiere Pro template operation and wait for a result",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "script": {
+                        "type": "string",
+                        "enum": ALLOWED_SCRIPTS
+                    },
+                    "parameters": { "type": "object" },
+                    "timeoutMs": { "type": "integer", "minimum": 1 },
+                    "resultRetentionSeconds": { "type": "integer", "minimum": 1, "maximum": 86400 },
+                    "targetInstanceId": { "type": "string", "minLength": 1 },
+                    "targetVersion": { "type": "string", "minLength": 1 }
+                },
+                "required": ["script"]
             }),
         },
         ToolSpec {
@@ -154,7 +175,7 @@ pub fn prompt_specs() -> Vec<PromptSpec> {
 pub fn prompt_messages(name: &str, args: &Value) -> Option<Value> {
     let msg = match name {
         "list-sequences" => {
-            "Please list all sequences in the current Premiere Pro project.".to_string()
+            "Please list all sequences in the current Premiere Pro project using run-script with script=\"listSequences\".".to_string()
         }
         "set-playhead-time" => {
             let time_seconds = args
@@ -167,7 +188,7 @@ pub fn prompt_messages(name: &str, args: &Value) -> Option<Value> {
                 .and_then(Value::as_str)
                 .unwrap_or("Active Sequence");
             format!(
-                "Please move the playhead using the set-playhead-time tool.\nSequence: {sequence_name}\nTime (seconds): {time_seconds}\nAfter queueing, call get-results."
+                "Please move the playhead using run-script with script=\"setPlayheadTime\".\nSequence: {sequence_name}\nTime (seconds): {time_seconds}\nPass sequenceName and timeSeconds in parameters."
             )
         }
         "export-sequence" => {
@@ -188,7 +209,7 @@ pub fn prompt_messages(name: &str, args: &Value) -> Option<Value> {
                 .and_then(Value::as_i64)
                 .unwrap_or(0);
             format!(
-                "Please export a sequence using the export-sequence tool.\nSequence: {sequence_name}\nOutput path: {output_path}\nPreset path: {preset_path}\nWork area type: {work_area}\nAfter queueing, call get-results."
+                "Please export a sequence using run-script with script=\"exportSequence\".\nSequence: {sequence_name}\nOutput path: {output_path}\nPreset path: {preset_path}\nWork area type: {work_area}\nPass sequenceName, outputPath, presetPath, and workAreaType in parameters."
             )
         }
         _ => return None,
@@ -224,14 +245,22 @@ UXP bridge source:
 Legacy CEP bridge is kept as a fallback only.
 
 Best practices:
-- Prefer run-jsx or run-jsx-file for new automation. The code runs inside the Premiere UXP panel.
-- Pass mode="unsafe" and a short description so the call is explicit.
+- Prefer run-jsx or run-jsx-file for general automation. The code runs inside the Premiere UXP panel.
+- Pass mode="unsafe" and a short description for custom code so the call is explicit.
+- Use run-script only for allowlisted template operations listed below.
 - Use get-jsx-result with requestId when a command times out or needs later inspection.
 - Prefer sequenceName/sequenceIndex to target the right sequence
 - outputPath and presetPath should be absolute paths
 - workAreaType: 0 = full sequence, 1 = work area only
 
-Compatibility scripts still accepted by run-script/legacy dispatch:
+Available scripts:
+- ping
+- getProjectInfo
+- listSequences
+- getActiveSequence
+- getSequenceInfo
+- setPlayheadTime
+- exportSequence
 "#
 }
 
@@ -242,6 +271,8 @@ mod tests {
     #[test]
     fn allowlist_contains_core_scripts() {
         assert!(is_allowed_script("listSequences"));
+        assert!(is_allowed_script("getProjectInfo"));
+        assert!(is_allowed_script("getSequenceInfo"));
         assert!(!is_allowed_script("unknown"));
     }
 
@@ -254,6 +285,7 @@ mod tests {
         assert!(names.contains(&"run-jsx"));
         assert!(names.contains(&"run-jsx-file"));
         assert!(names.contains(&"get-jsx-result"));
+        assert!(names.contains(&"run-script"));
         assert!(names.contains(&"list-premiere-instances"));
         assert!(!names.contains(&"list-sequences"));
     }

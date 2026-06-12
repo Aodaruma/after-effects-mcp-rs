@@ -497,6 +497,92 @@
     return { project: project, sequence: active };
   }
 
+  function collectionLength(collection) {
+    if (!collection) {
+      return 0;
+    }
+    var keys = ["length", "numTracks", "numItems", "numSequences"];
+    for (var i = 0; i < keys.length; i++) {
+      var value = collection[keys[i]];
+      if (typeof value === "number" && !isNaN(value)) {
+        return value;
+      }
+    }
+    return 0;
+  }
+
+  async function getSequencePlayhead(sequence) {
+    if (!sequence || !sequence.getPlayerPosition) {
+      return null;
+    }
+    try {
+      var position = await sequence.getPlayerPosition();
+      return {
+        seconds: position && position.seconds !== undefined ? position.seconds : null,
+        ticks: position && position.ticks !== undefined ? String(position.ticks) : null
+      };
+    } catch (_e) {
+      return null;
+    }
+  }
+
+  async function summarizeSequence(project, sequence) {
+    if (!sequence) {
+      return null;
+    }
+    return {
+      name: sequence.name || "",
+      index: project ? await findSequenceIndex(project, sequence) : null,
+      id: getSequenceId(sequence),
+      videoTrackCount: collectionLength(sequence.videoTracks),
+      audioTrackCount: collectionLength(sequence.audioTracks),
+      playhead: await getSequencePlayhead(sequence)
+    };
+  }
+
+  async function getProjectInfo() {
+    var project = await getActiveProject();
+    if (!project) {
+      return {
+        status: "error",
+        message: "Premiere project is not available."
+      };
+    }
+
+    var sequences = await getProjectSequences(project);
+    var active = project.getActiveSequence ? await project.getActiveSequence() : null;
+    return {
+      status: "success",
+      project: {
+        name: project.name || "",
+        path: project.path || null,
+        sequenceCount: sequences.length || 0,
+        activeSequence: await summarizeSequence(project, active)
+      }
+    };
+  }
+
+  async function getSequenceInfo(args) {
+    var resolved = await resolveSequence(args || {});
+    if (!resolved.project) {
+      return {
+        status: "error",
+        message: "Premiere project is not available."
+      };
+    }
+    if (!resolved.sequence) {
+      return {
+        status: "error",
+        message: "Sequence not found."
+      };
+    }
+
+    return {
+      status: "success",
+      sequence: await summarizeSequence(resolved.project, resolved.sequence)
+    };
+  }
+
   function toSerializable(value, depth, seen) {
     if (value === null || value === undefined) {
       return value === undefined ? null : value;
@@ -554,8 +640,10 @@
     return {
       getActiveProject: getActiveProject,
       getProjectSequences: getProjectSequences,
+      getProjectInfo: getProjectInfo,
       listSequences: listSequences,
       getActiveSequence: getActiveSequence,
+      getSequenceInfo: getSequenceInfo,
       setPlayheadTime: setPlayheadTime,
       exportSequence: exportSequence,
       readJsonFile: readJsonFile,
@@ -630,10 +718,14 @@
         return await executeJsxFile(args);
       case "ping":
         return ping();
+      case "getProjectInfo":
+        return await getProjectInfo();
       case "listSequences":
         return await listSequences();
       case "getActiveSequence":
         return await getActiveSequence();
+      case "getSequenceInfo":
+        return await getSequenceInfo(args);
       case "setPlayheadTime":
         return await setPlayheadTime(args);
       case "exportSequence":

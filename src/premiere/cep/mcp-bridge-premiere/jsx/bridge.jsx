@@ -352,6 +352,82 @@ function mcpResolveSequence(args) {
     return null;
 }
 
+function mcpCollectionLength(collection) {
+    if (!collection) {
+        return 0;
+    }
+    var keys = ["length", "numTracks", "numItems", "numSequences"];
+    for (var i = 0; i < keys.length; i++) {
+        var value = collection[keys[i]];
+        if (typeof value === "number" && !isNaN(value)) {
+            return value;
+        }
+    }
+    return 0;
+}
+
+function mcpGetSequencePlayhead(sequence) {
+    if (!sequence || !sequence.getPlayerPosition) {
+        return null;
+    }
+    try {
+        var position = sequence.getPlayerPosition();
+        return {
+            seconds: position && position.seconds !== undefined ? position.seconds : null,
+            ticks: position && position.ticks !== undefined ? String(position.ticks) : null
+        };
+    } catch (_e) {
+        return null;
+    }
+}
+
+function mcpSummarizeSequence(sequence) {
+    if (!sequence) {
+        return null;
+    }
+    return {
+        name: sequence.name || "",
+        index: mcpFindSequenceIndex(sequence),
+        id: mcpGetSequenceId(sequence),
+        videoTrackCount: mcpCollectionLength(sequence.videoTracks),
+        audioTrackCount: mcpCollectionLength(sequence.audioTracks),
+        playhead: mcpGetSequencePlayhead(sequence)
+    };
+}
+
+function getProjectInfo(_args) {
+    if (!app || !app.project) {
+        return JSON.stringify({
+            status: "error",
+            message: "Premiere project is not available."
+        });
+    }
+    var sequences = mcpGetSequenceCollection();
+    return JSON.stringify({
+        status: "success",
+        project: {
+            name: app.project.name || "",
+            path: app.project.path || null,
+            sequenceCount: mcpGetSequenceCount(sequences),
+            activeSequence: mcpSummarizeSequence(app.project.activeSequence)
+        }
+    });
+}
+
+function getSequenceInfo(args) {
+    var seq = mcpResolveSequence(args || {});
+    if (!seq) {
+        return JSON.stringify({
+            status: "error",
+            message: "Sequence not found."
+        });
+    }
+    return JSON.stringify({
+        status: "success",
+        sequence: mcpSummarizeSequence(seq)
+    });
+}
+
 function listSequences(_args) {
     var sequences = mcpGetSequenceCollection();
     var count = mcpGetSequenceCount(sequences);
